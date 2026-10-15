@@ -36,7 +36,7 @@ class ClaudeProvider(LLMProvider):
         try:
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=config.CLAUDE_MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -60,7 +60,7 @@ class ClaudeProvider(LLMProvider):
         try:
             async with self.client.messages.stream(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=config.CLAUDE_MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 async for text in stream.text_stream:
@@ -75,7 +75,7 @@ class ClaudeProvider(LLMProvider):
         try:
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=config.CLAUDE_MAX_TOKENS,
                 system=EXTRACT_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
                 output_config={

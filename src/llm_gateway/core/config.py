@@ -18,6 +18,7 @@ class AppConfig(BaseSettings):
 
     CLAUDE_API_KEY: str
     CLAUDE_MODEL: str = "claude-3-5-sonnet-latest"
+    CLAUDE_MAX_TOKENS: int = 4096
 
     # general timeouts
     CONNECT_TIMEOUT: float = 5.0
