@@ -21,6 +21,14 @@ from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import config
 
 
+ollama_timeout = httpx.Timeout(
+    timeout=180.0,
+    connect=5.0,
+    write=10.0,
+    pool=5.0,
+)
+
+
 class OllamaProvider(LLMProvider):
     """Local Ollama model provider."""
 
@@ -35,7 +43,7 @@ class OllamaProvider(LLMProvider):
     async def generate(self, prompt: str) -> GenerateResponse:
         """Generate text from a prompt."""
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=ollama_timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/api/chat",
                     json={
@@ -60,7 +68,7 @@ class OllamaProvider(LLMProvider):
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Ollama."""
         try:
-            async with httpx.AsyncClient(timeout=None) as client:
+            async with httpx.AsyncClient(timeout=ollama_timeout) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/api/chat",
@@ -94,7 +102,7 @@ class OllamaProvider(LLMProvider):
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=ollama_timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/api/chat",
                     json={
