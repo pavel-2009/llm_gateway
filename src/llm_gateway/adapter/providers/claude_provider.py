@@ -5,9 +5,6 @@ from collections.abc import AsyncIterator
 from anthropic import AsyncAnthropic
 
 from llm_gateway.adapter.contracts import (
-    EXTRACT_SCHEMA,
-    EXTRACT_SYSTEM_PROMPT,
-    ExtractedReview,
     GenerateResponse,
     Providers,
 )
@@ -15,7 +12,12 @@ from llm_gateway.adapter.errors import (
     raise_provider_error,
 )
 from llm_gateway.adapter.provider import LLMProvider
-from llm_gateway.core.config import config
+from llm_gateway.core.config import (
+    EXTRACT_SCHEMA,
+    EXTRACT_SYSTEM_PROMPT,
+    ExtractedReview,
+    config,
+)
 
 
 class ClaudeProvider(LLMProvider):
@@ -23,9 +25,11 @@ class ClaudeProvider(LLMProvider):
 
     def __init__(
         self,
-        api_key: str = config.CLAUDE_API_KEY,
+        api_key: str | None = config.CLAUDE_API_KEY,
         model: str = config.CLAUDE_MODEL,
     ) -> None:
+        if not api_key:
+            raise ValueError("CLAUDE_API_KEY is required to use ClaudeProvider")
         self.model = model
         self.client = AsyncAnthropic(api_key=api_key)
 

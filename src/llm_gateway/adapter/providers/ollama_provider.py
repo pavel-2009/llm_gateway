@@ -6,9 +6,6 @@ from collections.abc import AsyncIterator
 import httpx
 
 from llm_gateway.adapter.contracts import (
-    EXTRACT_SCHEMA,
-    EXTRACT_SYSTEM_PROMPT,
-    ExtractedReview,
     GenerateResponse,
     Providers,
 )
@@ -16,7 +13,12 @@ from llm_gateway.adapter.errors import (
     raise_provider_error,
 )
 from llm_gateway.adapter.provider import LLMProvider
-from llm_gateway.core.config import config
+from llm_gateway.core.config import (
+    EXTRACT_SCHEMA,
+    EXTRACT_SYSTEM_PROMPT,
+    ExtractedReview,
+    config,
+)
 
 
 ollama_timeout = httpx.Timeout(

@@ -5,11 +5,7 @@ from collections.abc import AsyncIterator
 from openai import AsyncOpenAI
 
 from llm_gateway.adapter.provider import LLMProvider
-from llm_gateway.core.config import config
 from llm_gateway.adapter.contracts import (
-    EXTRACT_SCHEMA,
-    EXTRACT_SYSTEM_PROMPT,
-    ExtractedReview,
     GenerateResponse,
     Providers,
 )
@@ -17,15 +13,23 @@ from llm_gateway.adapter.errors import (
     ProviderReportedError,
     raise_provider_error,
 )
+from llm_gateway.core.config import (
+    EXTRACT_SCHEMA,
+    EXTRACT_SYSTEM_PROMPT,
+    ExtractedReview,
+    config,
+)
 
 
 class OpenAIProvider(LLMProvider):
     """OpenAI model provider"""
 
     def __init__(self, 
-                api_key: str = config.OPENAI_API_KEY,
+                api_key: str | None = config.OPENAI_API_KEY,
                 model: str = config.OPENAI_MODEL
                 ):
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is required to use OpenAIProvider")
         self.api_key = api_key
         self.model = model
 

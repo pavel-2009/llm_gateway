@@ -3,7 +3,8 @@
 from collections.abc import AsyncIterator
 from typing import Protocol
 
-from llm_gateway.adapter.contracts import ExtractedReview, GenerateResponse
+from llm_gateway.adapter.contracts import GenerateResponse
+from llm_gateway.core.config import ExtractedReview
 
 
 class LLMProvider(Protocol):
