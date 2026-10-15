@@ -6,8 +6,17 @@ from openai import AsyncOpenAI
 
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import config
-from llm_gateway.adapter.contracts import GenerateResponse, ExtractedReview, Providers, EXTRACT_SYSTEM_PROMPT, EXTRACT_SCHEMA
-from llm_gateway.adapter.errors import AIGenerationError, AIStreamingError, AIExtractionError
+from llm_gateway.adapter.contracts import (
+    EXTRACT_SCHEMA,
+    EXTRACT_SYSTEM_PROMPT,
+    ExtractedReview,
+    GenerateResponse,
+    Providers,
+)
+from llm_gateway.adapter.errors import (
+    ProviderReportedError,
+    raise_provider_error,
+)
 
 
 class OpenAIProvider(LLMProvider):
@@ -37,7 +46,7 @@ class OpenAIProvider(LLMProvider):
             )
 
         except Exception as e:
-            raise AIGenerationError(f"OpenAI generation failed: {str(e)}") from e
+            raise_provider_error(Providers.OPENAI, "generation", e)
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream text from a prompt"""
@@ -53,9 +62,13 @@ class OpenAIProvider(LLMProvider):
                     yield chunk.delta
 
                 elif chunk.type == "response.failed":
-                    raise AIStreamingError("OpenAI streaming failed")
+                    error = chunk.response.error
+                    raise ProviderReportedError(
+                        error.message if error else "OpenAI returned a failed response",
+                        code=error.code if error else None,
+                    )
         except Exception as e:
-            raise AIStreamingError(f"OpenAI streaming failed: {str(e)}") from e
+            raise_provider_error(Providers.OPENAI, "streaming", e)
 
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt"""
@@ -79,4 +92,4 @@ class OpenAIProvider(LLMProvider):
             )
 
         except Exception as e:
-            raise AIExtractionError(f"OpenAI extraction failed: {str(e)}") from e
+            raise_provider_error(Providers.OPENAI, "extraction", e)

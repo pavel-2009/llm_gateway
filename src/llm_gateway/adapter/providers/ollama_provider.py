@@ -13,9 +13,7 @@ from llm_gateway.adapter.contracts import (
     Providers,
 )
 from llm_gateway.adapter.errors import (
-    AIExtractionError,
-    AIGenerationError,
-    AIStreamingError,
+    raise_provider_error,
 )
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import config
@@ -61,9 +59,7 @@ class OllamaProvider(LLMProvider):
                 model=self.model,
             )
         except Exception as exc:
-            raise AIGenerationError(
-                f"Ollama generation failed: {exc}"
-            ) from exc
+            raise_provider_error(Providers.OLLAMA, "generation", exc)
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Ollama."""
@@ -85,19 +81,13 @@ class OllamaProvider(LLMProvider):
 
                         payload = json.loads(line)
                         if payload.get("error"):
-                            raise AIStreamingError(
-                                f"Ollama streaming failed: {payload['error']}"
-                            )
+                            raise RuntimeError(payload["error"])
 
                         text = payload.get("message", {}).get("content", "")
                         if text:
                             yield text
-        except AIStreamingError:
-            raise
         except Exception as exc:
-            raise AIStreamingError(
-                f"Ollama streaming failed: {exc}"
-            ) from exc
+            raise_provider_error(Providers.OLLAMA, "streaming", exc)
 
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
@@ -125,6 +115,4 @@ class OllamaProvider(LLMProvider):
                 payload["message"]["content"]
             )
         except Exception as exc:
-            raise AIExtractionError(
-                f"Ollama extraction failed: {exc}"
-            ) from exc
+            raise_provider_error(Providers.OLLAMA, "extraction", exc)

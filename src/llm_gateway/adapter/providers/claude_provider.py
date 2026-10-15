@@ -12,9 +12,7 @@ from llm_gateway.adapter.contracts import (
     Providers,
 )
 from llm_gateway.adapter.errors import (
-    AIExtractionError,
-    AIGenerationError,
-    AIStreamingError,
+    raise_provider_error,
 )
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import config
@@ -51,9 +49,7 @@ class ClaudeProvider(LLMProvider):
                 model=self.model,
             )
         except Exception as exc:
-            raise AIGenerationError(
-                f"Claude generation failed: {exc}"
-            ) from exc
+            raise_provider_error(Providers.CLAUDE, "generation", exc)
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Claude."""
@@ -66,9 +62,7 @@ class ClaudeProvider(LLMProvider):
                 async for text in stream.text_stream:
                     yield text
         except Exception as exc:
-            raise AIStreamingError(
-                f"Claude streaming failed: {exc}"
-            ) from exc
+            raise_provider_error(Providers.CLAUDE, "streaming", exc)
 
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
@@ -93,6 +87,4 @@ class ClaudeProvider(LLMProvider):
             )
             return ExtractedReview.model_validate_json(text)
         except Exception as exc:
-            raise AIExtractionError(
-                f"Claude extraction failed: {exc}"
-            ) from exc
+            raise_provider_error(Providers.CLAUDE, "extraction", exc)
