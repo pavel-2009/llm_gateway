@@ -1,9 +1,15 @@
 """Base models and contracts for providers and adapters."""
 
-from collections.abc import AsyncIterator
 from typing import Literal
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class Providers:
+    OPENAI = "openai"
+    CLAUDE = "claude"
+    OLLAMA = "ollama"
 
 
 class ExtractedReview(BaseModel):
