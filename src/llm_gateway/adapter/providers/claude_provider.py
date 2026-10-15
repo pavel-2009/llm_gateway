@@ -1,12 +1,16 @@
 """Claude model provider."""
 
 from llm_gateway.adapter.provider import LLMProvider
+from llm_gateway.core.config import config
 
 
 class ClaudeProvider(LLMProvider):
     """Claude model provider"""
 
-    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-latest"):
+    def __init__(self,
+                api_key: str = config.CLAUDE_API_KEY,
+                model: str = config.CLAUDE_MODEL
+                ):
         self.api_key = api_key
         self.model = model
 

@@ -10,7 +10,6 @@ class AppConfig(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
 
-    OLLAMA_API_KEY: str
     OLLAMA_MODEL: str = "qwen3:8b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
@@ -19,3 +18,5 @@ class AppConfig(BaseSettings):
 
     CLAUDE_API_KEY: str
     CLAUDE_MODEL: str = "claude-3-5-sonnet-latest"
+
+config = AppConfig()

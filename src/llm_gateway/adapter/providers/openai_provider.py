@@ -3,12 +3,16 @@
 from typing import Any, Dict, List, Optional
 
 from llm_gateway.adapter.provider import LLMProvider
+from llm_gateway.core.config import config
 
 
 class OpenAIProvider(LLMProvider):
     """OpenAI model provider"""
 
-    def __init__(self, api_key: str, model: str = "gpt-3.5-turbo"):
+    def __init__(self, 
+                api_key: str = config.OPENAI_API_KEY,
+                model: str = config.OPENAI_MODEL
+                ):
         self.api_key = api_key
         self.model = model
 
