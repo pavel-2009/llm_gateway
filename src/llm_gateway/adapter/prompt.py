@@ -12,11 +12,8 @@ def build_prompt(
     stream: bool,
     provider: str,
 ) -> dict[str, Any]:
-    """Build provider-specific request arguments for a prompt.
-
-    Claude selects streaming through its messages.stream API, so it has no
-    stream flag in the returned request arguments.
-    """
+    """Build provider-specific request arguments for a prompt."""
+    
     if provider == Providers.OPENAI:
         request: dict[str, Any] = {"input": prompt}
         if stream:
