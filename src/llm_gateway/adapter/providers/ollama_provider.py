@@ -12,10 +12,10 @@ from llm_gateway.adapter.contracts import (
 from llm_gateway.adapter.errors import (
     raise_provider_error,
 )
+from llm_gateway.adapter.prompt import build_prompt
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import (
     EXTRACT_SCHEMA,
-    EXTRACT_SYSTEM_PROMPT,
     ExtractedReview,
     config,
 )
@@ -48,8 +48,7 @@ class OllamaProvider(LLMProvider):
                     f"{self.base_url}/api/chat",
                     json={
                         "model": self.model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
+                        **build_prompt(prompt, None, False, Providers.OLLAMA),
                     },
                 )
                 response.raise_for_status()
@@ -72,8 +71,7 @@ class OllamaProvider(LLMProvider):
                     f"{self.base_url}/api/chat",
                     json={
                         "model": self.model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": True,
+                        **build_prompt(prompt, None, True, Providers.OLLAMA),
                     },
                 ) as response:
                     response.raise_for_status()
@@ -99,15 +97,9 @@ class OllamaProvider(LLMProvider):
                     f"{self.base_url}/api/chat",
                     json={
                         "model": self.model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": EXTRACT_SYSTEM_PROMPT,
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        "format": EXTRACT_SCHEMA,
-                        "stream": False,
+                        **build_prompt(
+                            prompt, EXTRACT_SCHEMA, False, Providers.OLLAMA
+                        ),
                     },
                 )
                 response.raise_for_status()

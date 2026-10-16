@@ -13,9 +13,9 @@ from llm_gateway.adapter.errors import (
     ProviderReportedError,
     raise_provider_error,
 )
+from llm_gateway.adapter.prompt import build_prompt
 from llm_gateway.core.config import (
     EXTRACT_SCHEMA,
-    EXTRACT_SYSTEM_PROMPT,
     ExtractedReview,
     config,
 )
@@ -40,7 +40,7 @@ class OpenAIProvider(LLMProvider):
         try:
             response = await self.client.responses.create(
                 model=self.model,
-                input=prompt,
+                **build_prompt(prompt, None, False, Providers.OPENAI),
             )
     
             return GenerateResponse(
@@ -57,8 +57,7 @@ class OpenAIProvider(LLMProvider):
         try:
             stream = await self.client.responses.create(
                 model=self.model,
-                input=prompt,
-                stream=True
+                **build_prompt(prompt, None, True, Providers.OPENAI),
             )
 
             async for chunk in stream:
@@ -79,16 +78,7 @@ class OpenAIProvider(LLMProvider):
         try:
             response = await self.client.responses.create(
                 model=self.model,
-                instructions=EXTRACT_SYSTEM_PROMPT,
-                input=prompt,
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "extracted_review",
-                        "strict": True,
-                        "schema": EXTRACT_SCHEMA,
-                    }
-                }
+                **build_prompt(prompt, EXTRACT_SCHEMA, False, Providers.OPENAI),
             )
 
             return ExtractedReview.model_validate_json(

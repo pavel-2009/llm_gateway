@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from llm_gateway.adapter.contracts import Providers
+from llm_gateway.adapter.prompt import build_prompt
 from llm_gateway.adapter.providers import claude_provider, ollama_provider, openai_provider
 from llm_gateway.adapter.providers.claude_provider import ClaudeProvider
 from llm_gateway.adapter.providers.ollama_provider import OllamaProvider
@@ -23,6 +24,30 @@ async def _chunks(*items: SimpleNamespace) -> AsyncIterator[SimpleNamespace]:
 async def _string_chunks(*items: str) -> AsyncIterator[str]:
 	for item in items:
 		yield item
+
+
+def test_build_prompt_formats_schema_and_stream_by_provider() -> None:
+	schema = {"type": "object", "properties": {"rating": {"type": "integer"}}}
+
+	openai_request = build_prompt("review", schema, False, Providers.OPENAI)
+	assert openai_request["input"] == "review"
+	assert openai_request["text"]["format"]["schema"] == schema
+	assert openai_request["text"]["format"]["strict"] is True
+
+	claude_request = build_prompt("review", schema, True, Providers.CLAUDE)
+	assert claude_request["messages"] == [
+		{"role": "user", "content": "review"}
+	]
+	assert claude_request["output_config"]["format"]["schema"] == schema
+	assert "stream" not in claude_request
+
+	ollama_request = build_prompt("review", schema, True, Providers.OLLAMA)
+	assert ollama_request["messages"][-1] == {
+		"role": "user",
+		"content": "review",
+	}
+	assert ollama_request["format"] == schema
+	assert ollama_request["stream"] is True
 
 
 class _ClaudeStream:

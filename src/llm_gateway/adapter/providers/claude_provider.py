@@ -11,10 +11,10 @@ from llm_gateway.adapter.contracts import (
 from llm_gateway.adapter.errors import (
     raise_provider_error,
 )
+from llm_gateway.adapter.prompt import build_prompt
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import (
     EXTRACT_SCHEMA,
-    EXTRACT_SYSTEM_PROMPT,
     ExtractedReview,
     config,
 )
@@ -39,7 +39,7 @@ class ClaudeProvider(LLMProvider):
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=config.CLAUDE_MAX_TOKENS,
-                messages=[{"role": "user", "content": prompt}],
+                **build_prompt(prompt, None, False, Providers.CLAUDE),
             )
 
             text = "".join(
@@ -61,7 +61,7 @@ class ClaudeProvider(LLMProvider):
             async with self.client.messages.stream(
                 model=self.model,
                 max_tokens=config.CLAUDE_MAX_TOKENS,
-                messages=[{"role": "user", "content": prompt}],
+                **build_prompt(prompt, None, True, Providers.CLAUDE),
             ) as stream:
                 async for text in stream.text_stream:
                     yield text
@@ -74,14 +74,7 @@ class ClaudeProvider(LLMProvider):
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=config.CLAUDE_MAX_TOKENS,
-                system=EXTRACT_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-                output_config={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": EXTRACT_SCHEMA,
-                    }
-                },
+                **build_prompt(prompt, EXTRACT_SCHEMA, False, Providers.CLAUDE),
             )
 
             text = "".join(
