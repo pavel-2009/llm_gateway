@@ -6,10 +6,9 @@ from collections.abc import AsyncIterator
 import pytest
 
 from llm_gateway.adapter.contracts import GenerateResponse
-from llm_gateway.adapter.providers.errors import ProviderTimeoutError
+from llm_gateway.adapter.errors import AllModelsUnavailableError, ProviderTimeoutError
 from llm_gateway.policy.base_pipeline import BasePolicyPipeline
 from llm_gateway.policy.error_policy import ErrorPolicy
-from llm_gateway.adapter.providers.errors import AllModelsUnavailableError
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
 
