@@ -21,23 +21,18 @@ class BasePolicyPipeline:
         self.error_policy = error_policy
         self.retry_policy = retry_policy
 
-    def execute(
+    async def execute(
             self,
             operation: Callable[[], Awaitable[T]],
             context: RequestContext
         ) -> T:
         """Execute the operation with error and retry policies."""
 
-        def _execute_with_retry() -> T:
-            attempt = 0
+        if context.is_expired:
+            raise TimeoutError("Request deadline exceeded")
 
-            while True:
-                try:
-                    return asyncio.run(operation())
-                except Exception as e:
-                    attempt += 1
-                    if not self.retry_policy.should_retry(attempt, e):
-                        raise e
+        context.primary_attempts += 1
 
+        async with asyncio.timeout(context.remaining_time):
+            return await operation()
         
-        asyncio.wait_for(_execute_with_retry(), timeout=config.REQUEST_TIMEOUT)
