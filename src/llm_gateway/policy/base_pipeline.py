@@ -5,6 +5,7 @@ import asyncio
 
 from src.llm_gateway.adapter.errors import
 from src.llm_gateway.core.config import config
+from src.llm_gateway.policy.request_context import RequestContext
 
 
 T = TypeVar('T')
