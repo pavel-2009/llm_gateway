@@ -14,6 +14,7 @@ class OperationType(str, Enum):
 class RequestContext:
     request_id: str
     operation: OperationType
+    prompt: str
     deadline: float
 
     primary_attempts: int = 0
