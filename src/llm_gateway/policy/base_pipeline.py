@@ -51,16 +51,9 @@ class BasePolicyPipeline:
             if context.is_expired:
                 raise TimeoutError("Request deadline exceeded")
             try:
-                self._record_model_attempt(context)
                 return await self._execute_operation(context)
             except Exception as error:
-                context.model_errors[context.current_model or "unknown"] = error
-                should_retry = self._should_retry(error, context)
-                if self._should_raise_all_models_error(error, context, should_retry):
-                    raise AllModelsUnavailableError(context.model_errors) from error
-                if not should_retry:
-                    raise
-                await self._prepare_retry(error, context)
+                await self._handle_error(error, context)
 
     async def _execute_stream(self, context: RequestContext) -> AsyncIterable[str]:
         """Retry stream setup/failures until the first chunk is emitted."""
@@ -68,7 +61,6 @@ class BasePolicyPipeline:
             if context.is_expired:
                 raise TimeoutError("Request deadline exceeded")
             try:
-                self._record_model_attempt(context)
                 result = await self._execute_operation(context)
                 stream = cast(AsyncIterable[str], result)
                 async for chunk in stream:
@@ -78,61 +70,43 @@ class BasePolicyPipeline:
             except Exception as error:
                 if context.first_chunk_emitted:
                     raise
-                context.model_errors[context.current_model or "unknown"] = error
-                should_retry = self._should_retry(error, context)
-                if self._should_raise_all_models_error(error, context, should_retry):
-                    raise AllModelsUnavailableError(context.model_errors) from error
-                if not should_retry:
-                    raise
-                await self._prepare_retry(error, context)
+                await self._handle_error(error, context)
 
-    @staticmethod
-    def _record_model_attempt(context: RequestContext) -> None:
-        if context.current_model is not None:
-            context.attempted_models.add(context.current_model)
-
-    def _should_raise_all_models_error(
+    async def _handle_error(
         self,
         error: Exception,
         context: RequestContext,
-        should_retry: bool,
-    ) -> bool:
-        if not self.retry_policy.all_models_attempted(
-            context.primary_model,
-            context.attempted_models,
-        ):
-            return False
-        models = self.retry_policy.get_models(context.primary_model)
-        if len(models) > 1:
-            return True
-        return not should_retry and self.error_policy.should_retry(error)
+    ) -> None:
+        model = context.current_model or "unknown"
+        context.model_errors[model] = error
 
-    def _should_retry(self, error: Exception, context: RequestContext) -> bool:
-        return self.retry_policy.should_retry(
+        models = self.retry_policy.get_models(context.primary_model)
+        all_models_failed = bool(models) and all(
+            model in context.model_errors for model in models
+        )
+        retryable = self.error_policy.should_retry(error)
+        should_retry = self.retry_policy.should_retry(
             error,
             context.fallback_attempts,
             error_policy=self.error_policy,
         )
 
-    async def _prepare_retry(
-        self,
-        error: Exception,
-        context: RequestContext,
-    ) -> None:
+        if all_models_failed and (len(models) > 1 or (retryable and not should_retry)):
+            raise AllModelsUnavailableError(context.model_errors) from error
+        if not should_retry:
+            raise error
+
         context.fallback_attempts += 1
         delay = self.retry_policy.get_backoff_time(context.fallback_attempts)
-        remaining_time = context.remaining_time
-        if remaining_time <= 0:
+        if delay >= context.remaining_time:
+            if context.remaining_time > 0:
+                await asyncio.sleep(context.remaining_time)
             raise TimeoutError("Request deadline exceeded") from error
-        if delay >= remaining_time:
-            await asyncio.sleep(remaining_time)
-            raise TimeoutError("Request deadline exceeded") from error
-
         await asyncio.sleep(delay)
         context.current_model = self.retry_policy.get_next_model(
             context.current_model,
             context.primary_model,
-            context.attempted_models,
+            set(context.model_errors),
         )
 
     async def _execute_operation(

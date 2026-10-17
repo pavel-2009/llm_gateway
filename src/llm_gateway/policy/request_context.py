@@ -24,7 +24,6 @@ class RequestContext:
     current_model: str | None = None
 
     first_chunk_emitted: bool = False
-    attempted_models: set[str] = field(default_factory=set)
     model_errors: dict[str, Exception] = field(default_factory=dict)
 
     @property

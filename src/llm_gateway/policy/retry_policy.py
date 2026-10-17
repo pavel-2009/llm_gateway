@@ -54,15 +54,14 @@ class RetryPolicy:
         self,
         current_model: str | None,
         primary_model: str | None,
-        attempted_models: set[str] | None = None,
+        failed_models: set[str] | None = None,
     ) -> str | None:
         """Select an untried model, or retry the only configured model."""
         candidates = self.get_models(primary_model)
         if not candidates:
             return current_model
-        attempted = attempted_models or set()
         for model in candidates:
-            if model not in attempted:
+            if model not in (failed_models or set()):
                 return model
         if len(candidates) == 1:
             return candidates[0]
@@ -75,12 +74,3 @@ class RetryPolicy:
             for model in (primary_model, *self.fallback_models)
             if model is not None
         ))
-
-    def all_models_attempted(
-        self,
-        primary_model: str | None,
-        attempted_models: set[str],
-    ) -> bool:
-        """Return whether every configured model has been attempted."""
-        models = self.get_models(primary_model)
-        return bool(models) and set(models).issubset(attempted_models)
