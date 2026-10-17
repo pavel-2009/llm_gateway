@@ -9,6 +9,7 @@ from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.adapter.providers import ClaudeProvider, OllamaProvider, OpenAIProvider
 from llm_gateway.core.config import ExtractedReview
 from llm_gateway.policy.error_policy import ErrorPolicy
+from llm_gateway.policy.errors import AllModelsUnavailableError
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
 
@@ -50,9 +51,14 @@ class BasePolicyPipeline:
             if context.is_expired:
                 raise TimeoutError("Request deadline exceeded")
             try:
+                self._record_model_attempt(context)
                 return await self._execute_operation(context)
             except Exception as error:
-                if not self._should_retry(error, context):
+                context.model_errors[context.current_model or "unknown"] = error
+                should_retry = self._should_retry(error, context)
+                if self._should_raise_all_models_error(error, context, should_retry):
+                    raise AllModelsUnavailableError(context.model_errors) from error
+                if not should_retry:
                     raise
                 await self._prepare_retry(error, context)
 
@@ -62,6 +68,7 @@ class BasePolicyPipeline:
             if context.is_expired:
                 raise TimeoutError("Request deadline exceeded")
             try:
+                self._record_model_attempt(context)
                 result = await self._execute_operation(context)
                 stream = cast(AsyncIterable[str], result)
                 async for chunk in stream:
@@ -69,9 +76,36 @@ class BasePolicyPipeline:
                     yield chunk
                 return
             except Exception as error:
-                if context.first_chunk_emitted or not self._should_retry(error, context):
+                if context.first_chunk_emitted:
+                    raise
+                context.model_errors[context.current_model or "unknown"] = error
+                should_retry = self._should_retry(error, context)
+                if self._should_raise_all_models_error(error, context, should_retry):
+                    raise AllModelsUnavailableError(context.model_errors) from error
+                if not should_retry:
                     raise
                 await self._prepare_retry(error, context)
+
+    @staticmethod
+    def _record_model_attempt(context: RequestContext) -> None:
+        if context.current_model is not None:
+            context.attempted_models.add(context.current_model)
+
+    def _should_raise_all_models_error(
+        self,
+        error: Exception,
+        context: RequestContext,
+        should_retry: bool,
+    ) -> bool:
+        if not self.retry_policy.all_models_attempted(
+            context.primary_model,
+            context.attempted_models,
+        ):
+            return False
+        models = self.retry_policy.get_models(context.primary_model)
+        if len(models) > 1:
+            return True
+        return not should_retry and self.error_policy.should_retry(error)
 
     def _should_retry(self, error: Exception, context: RequestContext) -> bool:
         return self.retry_policy.should_retry(
@@ -98,6 +132,7 @@ class BasePolicyPipeline:
         context.current_model = self.retry_policy.get_next_model(
             context.current_model,
             context.primary_model,
+            context.attempted_models,
         )
 
     async def _execute_operation(

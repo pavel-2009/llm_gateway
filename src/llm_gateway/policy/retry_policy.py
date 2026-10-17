@@ -54,15 +54,33 @@ class RetryPolicy:
         self,
         current_model: str | None,
         primary_model: str | None,
+        attempted_models: set[str] | None = None,
     ) -> str | None:
-        """Select the next configured fallback, or keep the current model."""
-        candidates = tuple(dict.fromkeys(
+        """Select an untried model, or retry the only configured model."""
+        candidates = self.get_models(primary_model)
+        if not candidates:
+            return current_model
+        attempted = attempted_models or set()
+        for model in candidates:
+            if model not in attempted:
+                return model
+        if len(candidates) == 1:
+            return candidates[0]
+        return current_model
+
+    def get_models(self, primary_model: str | None) -> tuple[str, ...]:
+        """Return configured models in primary-then-fallback order."""
+        return tuple(dict.fromkeys(
             model
             for model in (primary_model, *self.fallback_models)
             if model is not None
         ))
-        if not candidates:
-            return current_model
-        if current_model not in candidates:
-            return candidates[0]
-        return candidates[(candidates.index(current_model) + 1) % len(candidates)]
+
+    def all_models_attempted(
+        self,
+        primary_model: str | None,
+        attempted_models: set[str],
+    ) -> bool:
+        """Return whether every configured model has been attempted."""
+        models = self.get_models(primary_model)
+        return bool(models) and set(models).issubset(attempted_models)

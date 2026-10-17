@@ -9,6 +9,7 @@ from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.adapter.errors import ProviderTimeoutError
 from llm_gateway.policy.base_pipeline import BasePolicyPipeline
 from llm_gateway.policy.error_policy import ErrorPolicy
+from llm_gateway.policy.errors import AllModelsUnavailableError
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
 
@@ -85,6 +86,55 @@ async def test_pipeline_retries_retryable_generation_error(
     assert result.text == "ok"
     assert provider.attempts == 2
     assert provider.last_prompt == "test prompt"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_raises_when_all_configured_models_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempted_models: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+        async def generate(self, prompt: str) -> GenerateResponse:
+            assert prompt == "test prompt"
+            attempted_models.append(self.model)
+            raise ProviderTimeoutError(
+                f"{self.model} timed out",
+                provider=self.model,
+                retryable=True,
+            )
+
+    monkeypatch.setattr(
+        "llm_gateway.policy.base_pipeline.OpenAIProvider",
+        lambda: FakeProvider("openai"),
+    )
+    monkeypatch.setattr(
+        "llm_gateway.policy.base_pipeline.OllamaProvider",
+        lambda: FakeProvider("ollama"),
+    )
+    monkeypatch.setattr(
+        "llm_gateway.policy.base_pipeline.ClaudeProvider",
+        lambda: FakeProvider("claude"),
+    )
+    pipeline = BasePolicyPipeline(
+        ErrorPolicy(),
+        RetryPolicy(
+            max_retries=3,
+            base_delay=0,
+            max_delay=0,
+            jitter=0,
+            fallback_models=("ollama", "claude"),
+        ),
+    )
+
+    with pytest.raises(AllModelsUnavailableError) as exc_info:
+        await pipeline.execute(_context(OperationType.GENERATE))
+
+    assert attempted_models == ["openai", "ollama", "claude"]
+    assert set(exc_info.value.failures) == {"openai", "ollama", "claude"}
 
 
 @pytest.mark.asyncio
