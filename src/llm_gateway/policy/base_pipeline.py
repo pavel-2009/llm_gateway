@@ -9,7 +9,7 @@ from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.adapter.providers import ClaudeProvider, OllamaProvider, OpenAIProvider
 from llm_gateway.core.config import ExtractedReview
 from llm_gateway.policy.error_policy import ErrorPolicy
-from llm_gateway.policy.errors import AllModelsUnavailableError
+from llm_gateway.adapter.providers.errors import AllModelsUnavailableError
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
 

@@ -8,7 +8,7 @@ from llm_gateway.adapter.contracts import (
     GenerateResponse,
     Providers,
 )
-from llm_gateway.adapter.errors import (
+from llm_gateway.adapter.providers.errors import (
     raise_provider_error,
 )
 from llm_gateway.adapter.prompt import build_prompt

@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from llm_gateway.adapter.errors import (
+from llm_gateway.adapter.providers.errors import (
 	AIExtractionError,
 	AIGenerationError,
 	AIStreamingError,
