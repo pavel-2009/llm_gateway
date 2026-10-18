@@ -60,11 +60,11 @@ class RetryPolicy:
         candidates = self.get_models(primary_model)
         if not candidates:
             return current_model
+        if len(candidates) == 1:
+            return candidates[0]
         for model in candidates:
             if model not in (failed_models or set()):
                 return model
-        if len(candidates) == 1:
-            return candidates[0]
         return current_model
 
     def get_models(self, primary_model: str | None) -> tuple[str, ...]:
