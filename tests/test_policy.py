@@ -1,5 +1,6 @@
 """Tests for error handling and retry policies."""
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 
@@ -82,6 +83,31 @@ async def test_pipeline_retries_retryable_generation_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_stops_after_retry_limit() -> None:
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def generate(self, prompt: str) -> GenerateResponse:
+            self.attempts += 1
+            raise ProviderTimeoutError("timed out", retryable=True)
+
+    provider = FakeProvider()
+    pipeline = BasePolicyPipeline(
+        ErrorPolicy(),
+        RetryPolicy(max_retries=2, base_delay=0, max_delay=0, jitter=0),
+        provider,
+    )
+    context = _context(OperationType.GENERATE)
+
+    with pytest.raises(ProviderTimeoutError):
+        await pipeline.execute(context)
+
+    assert provider.attempts == 3
+    assert context.retries_made == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_pipeline_retries_stream_error_before_first_chunk() -> None:
     class FakeProvider:
@@ -115,6 +141,39 @@ async def test_pipeline_retries_stream_error_before_first_chunk() -> None:
     assert context.first_chunk_emitted
     assert provider.attempts == 2
     assert provider.last_prompt == "test prompt"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_enforces_deadline_for_entire_stream() -> None:
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def stream(self, prompt: str) -> AsyncIterator[str]:
+            self.attempts += 1
+
+            async def chunks() -> AsyncIterator[str]:
+                await asyncio.Event().wait()
+                yield "unreachable"
+
+            return chunks()
+
+    provider = FakeProvider()
+    pipeline = BasePolicyPipeline(
+        ErrorPolicy(),
+        RetryPolicy(max_retries=1, base_delay=0, max_delay=0, jitter=0),
+        provider,
+    )
+    context = _context(OperationType.STREAM)
+    context.deadline = time.monotonic() + 0.02
+
+    result = await pipeline.execute(context)
+
+    with pytest.raises(TimeoutError):
+        async for _ in result:
+            pass
+
+    assert provider.attempts == 1
 
 
 @pytest.mark.asyncio
