@@ -78,10 +78,11 @@ class BasePolicyPipeline:
 
         context.retries_made += 1
         delay = self.retry_policy.get_backoff_time(context.retries_made)
+
         if delay >= context.remaining_time:
-            if context.remaining_time > 0:
-                await asyncio.sleep(context.remaining_time)
             raise TimeoutError("Request deadline exceeded") from error
+
+        await asyncio.sleep(delay)
 
     async def _execute_operation(
         self,
