@@ -73,7 +73,4 @@ class AppConfig(BaseSettings):
     CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float = 30.0
     CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS: int = 1
 
-    # Fallback mechanism
-    FALLBACK_ENABLED: bool = True
-
 config = AppConfig()

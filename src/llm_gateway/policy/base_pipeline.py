@@ -2,23 +2,14 @@
 
 import asyncio
 from collections.abc import AsyncIterable
-from enum import Enum
 from typing import cast
 
 from llm_gateway.adapter.contracts import GenerateResponse
-from llm_gateway.adapter.errors import AllModelsUnavailableError
-from llm_gateway.adapter.providers import ClaudeProvider, OllamaProvider, OpenAIProvider
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import ExtractedReview
 from llm_gateway.policy.error_policy import ErrorPolicy
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
-
-
-class ModelType(str, Enum):
-    OPENAI = "openai"
-    OLLAMA = "ollama"
-    CLAUDE = "claude"
 
 
 PipelineResult = GenerateResponse | ExtractedReview | AsyncIterable[str]
@@ -43,9 +34,6 @@ class BasePolicyPipeline:
         """Execute the operation with error and retry policies."""
         if context.is_expired:
             raise TimeoutError("Request deadline exceeded")
-
-        context.primary_attempts += 1
-        context.current_model = context.current_model or context.primary_model
 
         if context.operation == OperationType.STREAM:
             return self._execute_stream(context)
@@ -79,27 +67,17 @@ class BasePolicyPipeline:
         error: Exception,
         context: RequestContext,
     ) -> None:
-        model = context.current_model or "unknown"
-        context.model_errors[model] = error
-
-        models = self.retry_policy.get_models(context.primary_model)
-        all_models_failed = bool(models) and all(
-            model in context.model_errors for model in models
-        )
-        retryable = self.error_policy.should_retry(error)
         should_retry = self.retry_policy.should_retry(
             error,
-            context.fallback_attempts,
+            context.retries_made,
             error_policy=self.error_policy,
         )
 
-        if all_models_failed and (len(models) > 1 or (retryable and not should_retry)):
-            raise AllModelsUnavailableError(context.model_errors) from error
         if not should_retry:
             raise error
 
-        context.fallback_attempts += 1
-        delay = self.retry_policy.get_backoff_time(context.fallback_attempts)
+        context.retries_made += 1
+        delay = self.retry_policy.get_backoff_time(context.retries_made)
         if delay >= context.remaining_time:
             if context.remaining_time > 0:
                 await asyncio.sleep(context.remaining_time)

@@ -1,6 +1,6 @@
 """Request context for policy pipeline."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 import time
 
@@ -17,14 +17,9 @@ class RequestContext:
     prompt: str
     deadline: float
 
-    primary_attempts: int = 0
-    fallback_attempts: int = 0
-
-    primary_model: str | None = None
-    current_model: str | None = None
+    retries_made: int = 0
 
     first_chunk_emitted: bool = False
-    model_errors: dict[str, Exception] = field(default_factory=dict)
 
     @property
     def remaining_time(self) -> float:
