@@ -49,28 +49,3 @@ class RetryPolicy:
         exponential_delay = self.base_delay * 2 ** max(0, retry_number - 1)
         delay = exponential_delay + random.uniform(0, self.jitter)
         return min(self.max_delay, delay)
-
-    def get_next_model(
-        self,
-        current_model: str | None,
-        primary_model: str | None,
-        failed_models: set[str] | None = None,
-    ) -> str | None:
-        """Select an untried model, or retry the only configured model."""
-        candidates = self.get_models(primary_model)
-        if not candidates:
-            return current_model
-        if len(candidates) == 1:
-            return candidates[0]
-        for model in candidates:
-            if model not in (failed_models or set()):
-                return model
-        return current_model
-
-    def get_models(self, primary_model: str | None) -> tuple[str, ...]:
-        """Return configured models in primary-then-fallback order."""
-        return tuple(dict.fromkeys(
-            model
-            for model in (primary_model, *self.fallback_models)
-            if model is not None
-        ))

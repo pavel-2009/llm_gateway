@@ -8,6 +8,7 @@ from typing import cast
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.adapter.errors import AllModelsUnavailableError
 from llm_gateway.adapter.providers import ClaudeProvider, OllamaProvider, OpenAIProvider
+from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import ExtractedReview
 from llm_gateway.policy.error_policy import ErrorPolicy
 from llm_gateway.policy.request_context import OperationType, RequestContext
@@ -29,9 +30,11 @@ class BasePolicyPipeline:
         self,
         error_policy: ErrorPolicy,
         retry_policy: RetryPolicy,
+        provider: LLMProvider,
     ) -> None:
         self.error_policy = error_policy
         self.retry_policy = retry_policy
+        self.provider = provider
 
     async def execute(
         self,
@@ -47,13 +50,12 @@ class BasePolicyPipeline:
         if context.operation == OperationType.STREAM:
             return self._execute_stream(context)
 
-        while True:
-            if context.is_expired:
-                raise TimeoutError("Request deadline exceeded")
-            try:
-                return await self._execute_operation(context)
-            except Exception as error:
-                await self._handle_error(error, context)
+        async with asyncio.timeout(context.remaining_time):
+            while True:
+                try:
+                    return await self._execute_operation(context)
+                except Exception as error:
+                    await self._handle_error(error, context)
 
     async def _execute_stream(self, context: RequestContext) -> AsyncIterable[str]:
         """Retry stream setup/failures until the first chunk is emitted."""
@@ -102,32 +104,17 @@ class BasePolicyPipeline:
             if context.remaining_time > 0:
                 await asyncio.sleep(context.remaining_time)
             raise TimeoutError("Request deadline exceeded") from error
-        await asyncio.sleep(delay)
-        context.current_model = self.retry_policy.get_next_model(
-            context.current_model,
-            context.primary_model,
-            set(context.model_errors),
-        )
 
     async def _execute_operation(
         self,
         context: RequestContext,
     ) -> PipelineResult:
         """Execute the operation with the given prompt and model."""
-        model = ModelType(context.current_model)
-        if model == ModelType.OPENAI:
-            provider = OpenAIProvider()
-        elif model == ModelType.OLLAMA:
-            provider = OllamaProvider()
-        elif model == ModelType.CLAUDE:
-            provider = ClaudeProvider()
-        else:
-            raise ValueError(f"Unsupported model: {model}")
 
         if context.operation == OperationType.GENERATE:
-            return await provider.generate(context.prompt)
+            return await self.provider.generate(context.prompt)
         if context.operation == OperationType.STREAM:
-            return provider.stream(context.prompt)
+            return self.provider.stream(context.prompt)
         if context.operation == OperationType.EXTRACT:
-            return await provider.extract(context.prompt)
+            return await self.provider.extract(context.prompt)
         raise ValueError(f"Unsupported operation: {context.operation}")
