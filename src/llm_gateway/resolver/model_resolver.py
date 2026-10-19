@@ -1,6 +1,7 @@
 """Model resolver"""
 
 from collections.abc import AsyncIterable
+import asyncio
 from math import isfinite
 import time
 from typing import cast
@@ -77,24 +78,25 @@ class ModelResolver:
         if context.operation == OperationType.STREAM:
             return self._resolve_stream(context, request_id, deadline)
 
-        failures: dict[str, Exception] = {}
-        for tier in self._fallback_tiers(context.model):
-            provider_name, model_name = self.select_model(tier)
-            key = f"{provider_name}:{model_name}"
-            try:
-                return await self._execute(
-                    context,
-                    request_id,
-                    deadline,
-                    provider_name,
-                    model_name,
-                )
-            except LLMProviderError as error:
-                if not self._can_fallback(error):
-                    raise
-                failures[key] = error
+        async with asyncio.timeout_at(deadline):
+            failures: dict[str, Exception] = {}
+            for tier in self._fallback_tiers(context.model):
+                provider_name, model_name = self.select_model(tier)
+                key = f"{provider_name}:{model_name}"
+                try:
+                    return await self._execute(
+                        context,
+                        request_id,
+                        deadline,
+                        provider_name,
+                        model_name,
+                    )
+                except LLMProviderError as error:
+                    if not self._can_fallback(error):
+                        raise
+                    failures[key] = error
 
-        raise AllModelsUnavailableError(failures)
+            raise AllModelsUnavailableError(failures)
 
     async def _execute(
         self,
@@ -149,28 +151,29 @@ class ModelResolver:
         deadline: float,
     ) -> RESOLVER_RESULT:
         async def stream() -> AsyncIterable[str]:
-            failures: dict[str, Exception] = {}
-            for tier in self._fallback_tiers(context.model):
-                provider_name, model_name = self.select_model(tier)
-                key = f"{provider_name}:{model_name}"
-                emitted = False
-                try:
-                    result = await self._execute(
-                        context,
-                        request_id,
-                        deadline,
-                        provider_name,
-                        model_name,
-                    )
-                    async for chunk in cast(AsyncIterable[str], result):
-                        emitted = True
-                        yield chunk
-                    return
-                except LLMProviderError as error:
-                    if emitted or not self._can_fallback(error):
-                        raise
-                    failures[key] = error
-            raise AllModelsUnavailableError(failures)
+            async with asyncio.timeout_at(deadline):
+                failures: dict[str, Exception] = {}
+                for tier in self._fallback_tiers(context.model):
+                    provider_name, model_name = self.select_model(tier)
+                    key = f"{provider_name}:{model_name}"
+                    emitted = False
+                    try:
+                        result = await self._execute(
+                            context,
+                            request_id,
+                            deadline,
+                            provider_name,
+                            model_name,
+                        )
+                        async for chunk in cast(AsyncIterable[str], result):
+                            emitted = True
+                            yield chunk
+                        return
+                    except LLMProviderError as error:
+                        if emitted or not self._can_fallback(error):
+                            raise
+                        failures[key] = error
+                raise AllModelsUnavailableError(failures)
 
         return stream()
 

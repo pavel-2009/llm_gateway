@@ -1,6 +1,7 @@
 """Tests for resolver input validation and pipeline context creation."""
 
 from collections.abc import AsyncIterable
+import asyncio
 import time
 
 import pytest
@@ -331,6 +332,76 @@ async def test_resolver_rejects_invalid_configured_timeout(
                 prompt="test prompt",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_resolver_timeout_covers_pipeline_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def execute(self, context: object) -> str:
+            await asyncio.Event().wait()
+            return "unreachable"
+
+    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    with pytest.raises(TimeoutError):
+        await model_resolver.ModelResolver().resolve(
+            ResolveContext(
+                model="light",
+                operation=OperationType.GENERATE,
+                prompt="test prompt",
+                params={"deadline": 0.01},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolver_timeout_covers_stream_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def execute(self, context: object) -> object:
+            async def chunks() -> AsyncIterable[str]:
+                await asyncio.Event().wait()
+                yield "unreachable"
+
+            return chunks()
+
+    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    result = await model_resolver.ModelResolver().resolve(
+        ResolveContext(
+            model="light",
+            operation=OperationType.STREAM,
+            prompt="test prompt",
+            params={"deadline": 0.01},
+        )
+    )
+
+    with pytest.raises(TimeoutError):
+        async for _ in result:
+            pass
 
 
 @pytest.mark.asyncio
