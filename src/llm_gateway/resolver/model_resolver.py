@@ -1,6 +1,7 @@
 """Model resolver"""
 
 from collections.abc import AsyncIterable
+import time
 from uuid import uuid4
 
 from llm_gateway.policy.base_pipeline import BasePolicyPipeline
@@ -23,13 +24,13 @@ class ModelResolver:
         request_id = uuid4().hex
         operation = context.operation
         prompt = context.prompt
-        deadline = context.params.get("deadline", config.REQUEST_TIMEOUT)
+        timeout = context.params.deadline or config.REQUEST_TIMEOUT
 
         pipeline_context = RequestContext(
             request_id=request_id,
             operation=operation,
             prompt=prompt,
-            deadline=deadline
+            deadline=time.monotonic() + timeout,
         )
 
         error_policy = ErrorPolicy()

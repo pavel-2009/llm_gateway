@@ -1,14 +1,31 @@
-"""Context for model resolver"""
+"""Validated input context for model resolution."""
 
-from dataclasses import dataclass
-from enum import Enum
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from llm_gateway.policy.request_context import OperationType
 
 
-@dataclass(slots=True)
-class ResolveContext:
+class ResolveParams(BaseModel):
+    """Optional parameters used to build the pipeline request context."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    deadline: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class ResolveContext(BaseModel):
+    """Validated values required to resolve a model request."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     model: str
     operation: OperationType
     prompt: str
-    params: dict
+    params: ResolveParams = Field(default_factory=ResolveParams)
+
+    @field_validator("model", "prompt")
+    @classmethod
+    def require_non_empty_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
