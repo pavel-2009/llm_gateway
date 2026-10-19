@@ -44,7 +44,7 @@ class ModelResolver:
         )
 
         try:
-            result = await pipeline.execute(pipeline)
+            result = await pipeline.execute(pipeline_context)
             return result
 
         except Exception as e:
