@@ -1,8 +1,16 @@
 """Validated input context for model resolution."""
 
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from llm_gateway.policy.request_context import OperationType
+
+
+class ModelTier(str, Enum):
+    SMART = "smart"
+    MEDIUM = "medium"
+    LIGHT = "light"
 
 
 class ResolveParams(BaseModel):
@@ -18,7 +26,7 @@ class ResolveContext(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    model: str
+    model: ModelTier = Field(strict=False)
     operation: OperationType
     prompt: str
     params: ResolveParams = Field(default_factory=ResolveParams)
