@@ -1,14 +1,25 @@
 """Tests for resolver input validation and pipeline context creation."""
 
+from collections.abc import AsyncIterable
 import time
 
 import pytest
 from pydantic import ValidationError
 
 from llm_gateway.adapter.contracts import Providers
+from llm_gateway.adapter.errors import (
+    AllModelsUnavailableError,
+    ContentPolicyError,
+    ProviderUnavailableError,
+)
 from llm_gateway.core.config import config
 from llm_gateway.policy.request_context import OperationType
 from llm_gateway.resolver.resolver_context import ModelTier, ResolveContext
+
+
+def _configure_provider_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "CLAUDE_API_KEY", "claude-key")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "openai-key")
 
 
 def test_resolve_context_accepts_valid_values() -> None:
@@ -70,6 +81,7 @@ async def test_resolver_converts_timeout_to_monotonic_deadline(
 
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
     monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
+    _configure_provider_keys(monkeypatch)
     before = time.monotonic()
 
     result = await model_resolver.ModelResolver().resolve(
@@ -137,3 +149,236 @@ def test_resolver_creates_provider_adapter(
 
     assert isinstance(adapter, FakeProvider)
     assert adapter.model == "selected-model"
+
+
+@pytest.mark.asyncio
+async def test_resolver_falls_back_after_provider_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    _configure_provider_keys(monkeypatch)
+    monkeypatch.setattr(config, "CLAUDE_MODEL", "smart-model")
+    monkeypatch.setattr(config, "OPENAI_MODEL", "medium-model")
+    monkeypatch.setattr(config, "OLLAMA_MODEL", "light-model")
+    attempted_models: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, provider: FakeProvider, **kwargs: object) -> None:
+            self.provider = provider
+
+        async def execute(self, context: object) -> str:
+            attempted_models.append(self.provider.model)
+            if self.provider.model == "smart-model":
+                raise ProviderUnavailableError(
+                    "temporarily unavailable",
+                    provider="claude",
+                    retryable=True,
+                )
+            return "fallback response"
+
+    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    result = await model_resolver.ModelResolver().resolve(
+        ResolveContext(
+            model="smart",
+            operation=OperationType.GENERATE,
+            prompt="test prompt",
+        )
+    )
+
+    assert result == "fallback response"
+    assert attempted_models == ["smart-model", "medium-model"]
+
+
+@pytest.mark.asyncio
+async def test_resolver_does_not_fallback_for_content_policy_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    _configure_provider_keys(monkeypatch)
+    attempted_models: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, provider: FakeProvider, **kwargs: object) -> None:
+            self.provider = provider
+
+        async def execute(self, context: object) -> str:
+            attempted_models.append(self.provider.model)
+            raise ContentPolicyError("request refused", provider="claude")
+
+    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    with pytest.raises(ContentPolicyError):
+        await model_resolver.ModelResolver().resolve(
+            ResolveContext(
+                model="smart",
+                operation=OperationType.GENERATE,
+                prompt="test prompt",
+            )
+        )
+
+    assert len(attempted_models) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolver_aggregates_failures_after_exhausting_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    _configure_provider_keys(monkeypatch)
+    attempted_models: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, provider: FakeProvider, **kwargs: object) -> None:
+            self.provider = provider
+
+        async def execute(self, context: object) -> str:
+            attempted_models.append(self.provider.model)
+            raise ProviderUnavailableError(
+                "temporarily unavailable",
+                provider=self.provider.model,
+                retryable=True,
+            )
+
+    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    with pytest.raises(AllModelsUnavailableError) as exc_info:
+        await model_resolver.ModelResolver().resolve(
+            ResolveContext(
+                model="smart",
+                operation=OperationType.GENERATE,
+                prompt="test prompt",
+            )
+        )
+
+    assert attempted_models == [
+        config.CLAUDE_MODEL,
+        config.OPENAI_MODEL,
+        config.OLLAMA_MODEL,
+    ]
+    assert len(exc_info.value.failures) == 3
+
+
+@pytest.mark.asyncio
+async def test_resolver_falls_back_when_cloud_credentials_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    monkeypatch.setattr(config, "CLAUDE_API_KEY", None)
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, provider: FakeProvider, **kwargs: object) -> None:
+            self.provider = provider
+
+        async def execute(self, context: object) -> str:
+            return self.provider.model
+
+    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    result = await model_resolver.ModelResolver().resolve(
+        ResolveContext(
+            model="smart",
+            operation=OperationType.GENERATE,
+            prompt="test prompt",
+        )
+    )
+
+    assert result == config.OLLAMA_MODEL
+
+
+@pytest.mark.asyncio
+async def test_resolver_rejects_invalid_configured_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    monkeypatch.setattr(config, "REQUEST_TIMEOUT", 0)
+
+    with pytest.raises(ValueError, match="positive finite number"):
+        await model_resolver.ModelResolver().resolve(
+            ResolveContext(
+                model="light",
+                operation=OperationType.GENERATE,
+                prompt="test prompt",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_fallback_after_emitting_a_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    _configure_provider_keys(monkeypatch)
+    attempted_models: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    class FakePipeline:
+        def __init__(self, provider: FakeProvider, **kwargs: object) -> None:
+            self.provider = provider
+
+        async def execute(self, context: object) -> object:
+            attempted_models.append(self.provider.model)
+
+            async def chunks() -> AsyncIterable[str]:
+                yield "first chunk"
+                raise ProviderUnavailableError(
+                    "connection lost",
+                    provider="claude",
+                    retryable=True,
+                )
+
+            return chunks()
+
+    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+
+    result = await model_resolver.ModelResolver().resolve(
+        ResolveContext(
+            model="smart",
+            operation=OperationType.STREAM,
+            prompt="test prompt",
+        )
+    )
+    chunks: list[str] = []
+    with pytest.raises(ProviderUnavailableError):
+        async for chunk in result:
+            chunks.append(chunk)
+
+    assert chunks == ["first chunk"]
+    assert len(attempted_models) == 1
