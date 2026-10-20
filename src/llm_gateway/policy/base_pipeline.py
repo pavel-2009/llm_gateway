@@ -19,12 +19,10 @@ class BasePolicyPipeline:
 
     def __init__(
         self,
-        error_policy: ErrorPolicy,
-        retry_policy: RetryPolicy,
         provider: LLMProvider,
     ) -> None:
-        self.error_policy = error_policy
-        self.retry_policy = retry_policy
+        self.error_policy = ErrorPolicy()
+        self.retry_policy = RetryPolicy()
         self.provider = provider
 
     async def execute(

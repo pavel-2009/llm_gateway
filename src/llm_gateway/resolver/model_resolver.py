@@ -87,8 +87,6 @@ class ModelResolver:
         )
         provider = self.model_registry.create_provider(provider_name, model_name)
         pipeline = BasePolicyPipeline(
-            error_policy=ErrorPolicy(),
-            retry_policy=RetryPolicy(),
             provider=provider,
         )
         pipeline_context = RequestContext(
