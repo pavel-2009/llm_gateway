@@ -15,6 +15,7 @@ from llm_gateway.adapter.errors import (
 )
 from llm_gateway.core.config import config
 from llm_gateway.policy.request_context import OperationType
+from llm_gateway.resolver import model_registry
 from llm_gateway.resolver.resolver_context import ModelTier, ResolveContext
 
 
@@ -81,7 +82,7 @@ async def test_resolver_converts_timeout_to_monotonic_deadline(
             self.model = model
 
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
-    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OpenAIProvider", FakeProvider)
     _configure_provider_keys(monkeypatch)
     before = time.monotonic()
 
@@ -112,26 +113,24 @@ def test_resolver_selects_configured_model(
     expected_provider: str,
     expected_model: str,
 ) -> None:
-    from llm_gateway.resolver.model_resolver import ModelResolver
-
-    assert ModelResolver().select_model(tier) == (expected_provider, expected_model)
+    assert model_registry.ModelRegistry().get_models(tier)[0] == (
+        expected_provider,
+        expected_model,
+    )
 
 
 @pytest.mark.parametrize(
-    ("tier", "provider_name"),
+    "provider_name",
     [
-        (ModelTier.SMART, Providers.CLAUDE),
-        (ModelTier.MEDIUM, Providers.OPENAI),
-        (ModelTier.LIGHT, Providers.OLLAMA),
+        Providers.CLAUDE,
+        Providers.OPENAI,
+        Providers.OLLAMA,
     ],
 )
 def test_resolver_creates_provider_adapter(
     monkeypatch: pytest.MonkeyPatch,
-    tier: ModelTier,
     provider_name: str,
 ) -> None:
-    from llm_gateway.resolver import model_resolver
-
     class FakeProvider:
         def __init__(self, model: str) -> None:
             self.model = model
@@ -141,9 +140,9 @@ def test_resolver_creates_provider_adapter(
         Providers.OPENAI: "OpenAIProvider",
         Providers.OLLAMA: "OllamaProvider",
     }[provider_name]
-    monkeypatch.setattr(model_resolver, provider_attribute, FakeProvider)
+    monkeypatch.setattr(model_registry, provider_attribute, FakeProvider)
 
-    adapter = model_resolver.ModelResolver().create_provider(
+    adapter = model_registry.ModelRegistry().create_provider(
         provider_name,
         "selected-model",
     )
@@ -182,9 +181,9 @@ async def test_resolver_falls_back_after_provider_unavailable(
                 )
             return "fallback response"
 
-    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
-    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
-    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OllamaProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     result = await model_resolver.ModelResolver().resolve(
@@ -220,7 +219,7 @@ async def test_resolver_does_not_fallback_for_content_policy_error(
             attempted_models.append(self.provider.model)
             raise ContentPolicyError("request refused", provider="claude")
 
-    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "ClaudeProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     with pytest.raises(ContentPolicyError):
@@ -260,9 +259,9 @@ async def test_resolver_aggregates_failures_after_exhausting_fallbacks(
                 retryable=True,
             )
 
-    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
-    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
-    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OllamaProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     with pytest.raises(AllModelsUnavailableError) as exc_info:
@@ -302,7 +301,7 @@ async def test_resolver_falls_back_when_cloud_credentials_are_missing(
         async def execute(self, context: object) -> str:
             return self.provider.model
 
-    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OllamaProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     result = await model_resolver.ModelResolver().resolve(
@@ -352,7 +351,7 @@ async def test_resolver_timeout_covers_pipeline_execution(
             await asyncio.Event().wait()
             return "unreachable"
 
-    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OllamaProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     with pytest.raises(TimeoutError):
@@ -387,7 +386,7 @@ async def test_resolver_timeout_covers_stream_consumption(
 
             return chunks()
 
-    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OllamaProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     result = await model_resolver.ModelResolver().resolve(
@@ -434,9 +433,9 @@ async def test_stream_does_not_fallback_after_emitting_a_chunk(
 
             return chunks()
 
-    monkeypatch.setattr(model_resolver, "ClaudeProvider", FakeProvider)
-    monkeypatch.setattr(model_resolver, "OpenAIProvider", FakeProvider)
-    monkeypatch.setattr(model_resolver, "OllamaProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OpenAIProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OllamaProvider", FakeProvider)
     monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
 
     result = await model_resolver.ModelResolver().resolve(
