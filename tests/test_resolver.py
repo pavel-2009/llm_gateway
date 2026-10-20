@@ -14,7 +14,7 @@ from llm_gateway.adapter.errors import (
     ProviderUnavailableError,
 )
 from llm_gateway.core.config import config
-from llm_gateway.policy.request_context import OperationType
+from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.resolver import model_registry
 from llm_gateway.resolver.resolver_context import ModelTier, ResolveContext
 
@@ -66,13 +66,13 @@ async def test_resolver_converts_timeout_to_monotonic_deadline(
 ) -> None:
     from llm_gateway.resolver import model_resolver
 
-    captured_context = None
+    captured_context: RequestContext | None = None
 
     class FakePipeline:
         def __init__(self, **kwargs: object) -> None:
             pass
 
-        async def execute(self, context: object) -> str:
+        async def execute(self, context: RequestContext) -> str:
             nonlocal captured_context
             captured_context = context
             return "ok"
@@ -98,6 +98,66 @@ async def test_resolver_converts_timeout_to_monotonic_deadline(
     assert result == "ok"
     assert captured_context is not None
     assert before + 5.0 <= captured_context.deadline <= time.monotonic() + 5.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("explicit_timeout", "expected_timeout"),
+    [(None, 8.0), (3.0, 3.0)],
+)
+async def test_resolver_uses_stream_timeout_unless_overridden(
+    monkeypatch: pytest.MonkeyPatch,
+    explicit_timeout: float | None,
+    expected_timeout: float,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    captured_context: RequestContext | None = None
+
+    class FakePipeline:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def execute(self, context: RequestContext) -> AsyncIterable[str]:
+            nonlocal captured_context
+            captured_context = context
+
+            async def chunks() -> AsyncIterable[str]:
+                yield "ok"
+
+            return chunks()
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    monkeypatch.setattr(config, "STREAM_TIMEOUT", 8.0)
+    monkeypatch.setattr(config, "REQUEST_TIMEOUT", 60.0)
+    monkeypatch.setattr(model_resolver, "BasePolicyPipeline", FakePipeline)
+    monkeypatch.setattr(model_registry, "OpenAIProvider", FakeProvider)
+    _configure_provider_keys(monkeypatch)
+    before = time.monotonic()
+
+    result = await model_resolver.ModelResolver().resolve(
+        ResolveContext(
+            model="medium",
+            operation=OperationType.STREAM,
+            prompt="test prompt",
+            params=(
+                {"deadline": explicit_timeout}
+                if explicit_timeout is not None
+                else {}
+            ),
+        )
+    )
+    assert [chunk async for chunk in result] == ["ok"]
+
+    assert captured_context is not None
+    assert (
+        before + expected_timeout
+        <= captured_context.deadline
+        <= time.monotonic() + expected_timeout
+    )
 
 
 @pytest.mark.parametrize(

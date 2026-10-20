@@ -36,7 +36,11 @@ class ModelResolver:
         timeout = (
             context.params.deadline
             if context.params.deadline is not None
-            else config.REQUEST_TIMEOUT
+            else (
+                config.STREAM_TIMEOUT
+                if context.operation == OperationType.STREAM
+                else config.REQUEST_TIMEOUT
+            )
         )
         if (
             isinstance(timeout, bool)
