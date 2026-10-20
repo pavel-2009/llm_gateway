@@ -54,6 +54,23 @@ def _context(operation: OperationType) -> RequestContext:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_does_not_enforce_overall_operation_deadline() -> None:
+    class FakeProvider:
+        async def generate(self, prompt: str) -> GenerateResponse:
+            await asyncio.sleep(0.12)
+            return GenerateResponse(text="ok", provider="openai", model="test")
+
+    pipeline = BasePolicyPipeline(FakeProvider())
+    context = _context(OperationType.GENERATE)
+    context.deadline = time.monotonic() + 0.1
+
+    result = await pipeline.execute(context)
+
+    assert isinstance(result, GenerateResponse)
+    assert result.text == "ok"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_retries_retryable_generation_error() -> None:
     class FakeProvider:
         def __init__(self) -> None:
@@ -144,7 +161,7 @@ async def test_pipeline_retries_stream_error_before_first_chunk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_enforces_deadline_for_entire_stream() -> None:
+async def test_pipeline_does_not_enforce_overall_stream_deadline() -> None:
     class FakeProvider:
         def __init__(self) -> None:
             self.attempts = 0
@@ -153,26 +170,21 @@ async def test_pipeline_enforces_deadline_for_entire_stream() -> None:
             self.attempts += 1
 
             async def chunks() -> AsyncIterator[str]:
-                await asyncio.Event().wait()
-                yield "unreachable"
+                await asyncio.sleep(0.12)
+                yield "chunk"
 
             return chunks()
 
     provider = FakeProvider()
-    pipeline = BasePolicyPipeline(
-        ErrorPolicy(),
-        RetryPolicy(max_retries=1, base_delay=0, max_delay=0, jitter=0),
-        provider,
-    )
+    pipeline = BasePolicyPipeline(provider)
     context = _context(OperationType.STREAM)
-    context.deadline = time.monotonic() + 0.02
+    context.deadline = time.monotonic() + 0.1
 
     result = await pipeline.execute(context)
 
-    with pytest.raises(TimeoutError):
-        async for _ in result:
-            pass
+    chunks = [chunk async for chunk in result]
 
+    assert chunks == ["chunk"]
     assert provider.attempts == 1
 
 

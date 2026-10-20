@@ -19,12 +19,10 @@ class BasePolicyPipeline:
 
     def __init__(
         self,
-        error_policy: ErrorPolicy,
-        retry_policy: RetryPolicy,
         provider: LLMProvider,
     ) -> None:
-        self.error_policy = error_policy
-        self.retry_policy = retry_policy
+        self.error_policy = ErrorPolicy()
+        self.retry_policy = RetryPolicy()
         self.provider = provider
 
     async def execute(
@@ -38,30 +36,28 @@ class BasePolicyPipeline:
         if context.operation == OperationType.STREAM:
             return self._execute_stream(context)
 
-        async with asyncio.timeout(context.remaining_time):
-            while True:
-                try:
-                    return await self._execute_operation(context)
-                except Exception as error:
-                    await self._handle_error(error, context)
+        while True:
+            try:
+                return await self._execute_operation(context)
+            except Exception as error:
+                await self._handle_error(error, context)
 
     async def _execute_stream(self, context: RequestContext) -> AsyncIterable[str]:
         """Retry stream setup/failures until the first chunk is emitted."""
-        async with asyncio.timeout(context.remaining_time):
-            while True:
-                if context.is_expired:
-                    raise TimeoutError("Request deadline exceeded")
-                try:
-                    result = await self._execute_operation(context)
-                    stream = cast(AsyncIterable[str], result)
-                    async for chunk in stream:
-                        context.first_chunk_emitted = True
-                        yield chunk
-                    return
-                except Exception as error:
-                    if context.first_chunk_emitted:
-                        raise
-                    await self._handle_error(error, context)
+        while True:
+            if context.is_expired:
+                raise TimeoutError("Request deadline exceeded")
+            try:
+                result = await self._execute_operation(context)
+                stream = cast(AsyncIterable[str], result)
+                async for chunk in stream:
+                    context.first_chunk_emitted = True
+                    yield chunk
+                return
+            except Exception as error:
+                if context.first_chunk_emitted:
+                    raise
+                await self._handle_error(error, context)
 
     async def _handle_error(
         self,
@@ -81,7 +77,7 @@ class BasePolicyPipeline:
         delay = self.retry_policy.get_backoff_time(context.retries_made)
 
         if delay >= context.remaining_time:
-            raise TimeoutError("Request deadline exceeded") from error
+            raise error
 
         await asyncio.sleep(delay)
 
