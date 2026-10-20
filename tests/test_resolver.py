@@ -7,7 +7,7 @@ import time
 import pytest
 from pydantic import ValidationError
 
-from llm_gateway.adapter.contracts import Providers
+from llm_gateway.adapter.contracts import GenerateResponse, Providers
 from llm_gateway.adapter.errors import (
     AllModelsUnavailableError,
     ContentPolicyError,
@@ -195,6 +195,56 @@ async def test_resolver_falls_back_after_provider_unavailable(
     )
 
     assert result == "fallback response"
+    assert attempted_models == ["smart-model", "medium-model"]
+
+
+@pytest.mark.asyncio
+async def test_resolver_falls_back_when_retry_delay_exceeds_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from llm_gateway.resolver import model_resolver
+
+    _configure_provider_keys(monkeypatch)
+    monkeypatch.setattr(config, "CLAUDE_MODEL", "smart-model")
+    monkeypatch.setattr(config, "OPENAI_MODEL", "medium-model")
+    monkeypatch.setattr(config, "MAX_RETRIES", 1)
+    monkeypatch.setattr(config, "RETRY_BASE_DELAY", 1.0)
+    monkeypatch.setattr(config, "RETRY_MAX_DELAY", 1.0)
+    monkeypatch.setattr(config, "RETRY_JITTER", 0)
+    attempted_models: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+        async def generate(self, prompt: str) -> GenerateResponse:
+            attempted_models.append(self.model)
+            if self.model == "smart-model":
+                raise ProviderUnavailableError(
+                    "temporarily unavailable",
+                    provider="claude",
+                    retryable=True,
+                )
+            return GenerateResponse(
+                text="fallback response",
+                provider="openai",
+                model=self.model,
+            )
+
+    monkeypatch.setattr(model_registry, "ClaudeProvider", FakeProvider)
+    monkeypatch.setattr(model_registry, "OpenAIProvider", FakeProvider)
+
+    result = await model_resolver.ModelResolver().resolve(
+        ResolveContext(
+            model="smart",
+            operation=OperationType.GENERATE,
+            prompt="test prompt",
+            params={"deadline": 0.1},
+        )
+    )
+
+    assert isinstance(result, GenerateResponse)
+    assert result.text == "fallback response"
     assert attempted_models == ["smart-model", "medium-model"]
 
 

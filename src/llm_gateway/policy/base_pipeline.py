@@ -79,7 +79,7 @@ class BasePolicyPipeline:
         delay = self.retry_policy.get_backoff_time(context.retries_made)
 
         if delay >= context.remaining_time:
-            raise TimeoutError("Request deadline exceeded") from error
+            raise error
 
         await asyncio.sleep(delay)
 
