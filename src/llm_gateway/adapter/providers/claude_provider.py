@@ -1,6 +1,7 @@
 """Claude model provider."""
 
 from collections.abc import AsyncIterator
+import logging
 
 from anthropic import AsyncAnthropic
 
@@ -18,6 +19,10 @@ from llm_gateway.core.config import (
     ExtractedReview,
     config,
 )
+from llm_gateway.core.logging_context import request_id_context
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeProvider(LLMProvider):
@@ -35,6 +40,14 @@ class ClaudeProvider(LLMProvider):
 
     async def generate(self, prompt: str) -> GenerateResponse:
         """Generate text from a prompt."""
+        request_id = request_id_context.get()
+        logger.info(
+            "Provider request started request_id=%s provider=%s "
+            "operation=generation model=%s",
+            request_id,
+            Providers.CLAUDE,
+            self.model,
+        )
         try:
             response = await self.client.messages.create(
                 model=self.model,
@@ -47,16 +60,40 @@ class ClaudeProvider(LLMProvider):
                 for block in response.content
                 if block.type == "text"
             )
+            logger.info(
+                "Provider request completed request_id=%s provider=%s "
+                "operation=generation output_chars=%s",
+                request_id,
+                Providers.CLAUDE,
+                len(text),
+            )
             return GenerateResponse(
                 text=text,
                 provider=Providers.CLAUDE,
                 model=self.model,
             )
         except Exception as exc:
+            logger.error(
+                "Provider request failed request_id=%s provider=%s "
+                "operation=generation error_type=%s",
+                request_id,
+                Providers.CLAUDE,
+                type(exc).__name__,
+            )
             raise_provider_error(Providers.CLAUDE, "generation", exc)
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Claude."""
+        request_id = request_id_context.get()
+        chunks = 0
+        output_chars = 0
+        logger.info(
+            "Provider request started request_id=%s provider=%s "
+            "operation=streaming model=%s",
+            request_id,
+            Providers.CLAUDE,
+            self.model,
+        )
         try:
             async with self.client.messages.stream(
                 model=self.model,
@@ -64,12 +101,38 @@ class ClaudeProvider(LLMProvider):
                 **build_prompt(prompt, None, True, Providers.CLAUDE),
             ) as stream:
                 async for text in stream.text_stream:
+                    chunks += 1
+                    output_chars += len(text)
                     yield text
+            logger.info(
+                "Provider request completed request_id=%s provider=%s "
+                "operation=streaming chunks=%s output_chars=%s",
+                request_id,
+                Providers.CLAUDE,
+                chunks,
+                output_chars,
+            )
         except Exception as exc:
+            logger.error(
+                "Provider request failed request_id=%s provider=%s "
+                "operation=streaming chunks=%s error_type=%s",
+                request_id,
+                Providers.CLAUDE,
+                chunks,
+                type(exc).__name__,
+            )
             raise_provider_error(Providers.CLAUDE, "streaming", exc)
 
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
+        request_id = request_id_context.get()
+        logger.info(
+            "Provider request started request_id=%s provider=%s "
+            "operation=extraction model=%s",
+            request_id,
+            Providers.CLAUDE,
+            self.model,
+        )
         try:
             response = await self.client.messages.create(
                 model=self.model,
@@ -82,6 +145,20 @@ class ClaudeProvider(LLMProvider):
                 for block in response.content
                 if block.type == "text"
             )
-            return ExtractedReview.model_validate_json(text)
+            result = ExtractedReview.model_validate_json(text)
+            logger.info(
+                "Provider request completed request_id=%s provider=%s "
+                "operation=extraction",
+                request_id,
+                Providers.CLAUDE,
+            )
+            return result
         except Exception as exc:
+            logger.error(
+                "Provider request failed request_id=%s provider=%s "
+                "operation=extraction error_type=%s",
+                request_id,
+                Providers.CLAUDE,
+                type(exc).__name__,
+            )
             raise_provider_error(Providers.CLAUDE, "extraction", exc)

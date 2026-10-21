@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator
+import logging
 
 import httpx
 
@@ -19,6 +20,10 @@ from llm_gateway.core.config import (
     ExtractedReview,
     config,
 )
+from llm_gateway.core.logging_context import request_id_context
+
+
+logger = logging.getLogger(__name__)
 
 
 ollama_timeout = httpx.Timeout(
@@ -42,6 +47,14 @@ class OllamaProvider(LLMProvider):
 
     async def generate(self, prompt: str) -> GenerateResponse:
         """Generate text from a prompt."""
+        request_id = request_id_context.get()
+        logger.info(
+            "Provider request started request_id=%s provider=%s "
+            "operation=generation model=%s",
+            request_id,
+            Providers.OLLAMA,
+            self.model,
+        )
         try:
             async with httpx.AsyncClient(timeout=ollama_timeout) as client:
                 response = await client.post(
@@ -54,16 +67,41 @@ class OllamaProvider(LLMProvider):
                 response.raise_for_status()
                 payload = response.json()
 
-            return GenerateResponse(
+            result = GenerateResponse(
                 text=payload["message"]["content"],
                 provider=Providers.OLLAMA,
                 model=self.model,
             )
+            logger.info(
+                "Provider request completed request_id=%s provider=%s "
+                "operation=generation output_chars=%s",
+                request_id,
+                Providers.OLLAMA,
+                len(result.text),
+            )
+            return result
         except Exception as exc:
+            logger.error(
+                "Provider request failed request_id=%s provider=%s "
+                "operation=generation error_type=%s",
+                request_id,
+                Providers.OLLAMA,
+                type(exc).__name__,
+            )
             raise_provider_error(Providers.OLLAMA, "generation", exc)
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Ollama."""
+        request_id = request_id_context.get()
+        chunks = 0
+        output_chars = 0
+        logger.info(
+            "Provider request started request_id=%s provider=%s "
+            "operation=streaming model=%s",
+            request_id,
+            Providers.OLLAMA,
+            self.model,
+        )
         try:
             async with httpx.AsyncClient(timeout=ollama_timeout) as client:
                 async with client.stream(
@@ -85,12 +123,38 @@ class OllamaProvider(LLMProvider):
 
                         text = payload.get("message", {}).get("content", "")
                         if text:
+                            chunks += 1
+                            output_chars += len(text)
                             yield text
+            logger.info(
+                "Provider request completed request_id=%s provider=%s "
+                "operation=streaming chunks=%s output_chars=%s",
+                request_id,
+                Providers.OLLAMA,
+                chunks,
+                output_chars,
+            )
         except Exception as exc:
+            logger.error(
+                "Provider request failed request_id=%s provider=%s "
+                "operation=streaming chunks=%s error_type=%s",
+                request_id,
+                Providers.OLLAMA,
+                chunks,
+                type(exc).__name__,
+            )
             raise_provider_error(Providers.OLLAMA, "streaming", exc)
 
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
+        request_id = request_id_context.get()
+        logger.info(
+            "Provider request started request_id=%s provider=%s "
+            "operation=extraction model=%s",
+            request_id,
+            Providers.OLLAMA,
+            self.model,
+        )
         try:
             async with httpx.AsyncClient(timeout=ollama_timeout) as client:
                 response = await client.post(
@@ -105,8 +169,22 @@ class OllamaProvider(LLMProvider):
                 response.raise_for_status()
                 payload = response.json()
 
-            return ExtractedReview.model_validate_json(
+            result = ExtractedReview.model_validate_json(
                 payload["message"]["content"]
             )
+            logger.info(
+                "Provider request completed request_id=%s provider=%s "
+                "operation=extraction",
+                request_id,
+                Providers.OLLAMA,
+            )
+            return result
         except Exception as exc:
+            logger.error(
+                "Provider request failed request_id=%s provider=%s "
+                "operation=extraction error_type=%s",
+                request_id,
+                Providers.OLLAMA,
+                type(exc).__name__,
+            )
             raise_provider_error(Providers.OLLAMA, "extraction", exc)
