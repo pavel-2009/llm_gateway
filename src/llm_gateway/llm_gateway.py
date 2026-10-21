@@ -27,6 +27,8 @@ class LLMGateway:
             params=params
         )
 
+        return await self.resolver.resolve(context)
+
     async def extract(self, prompt: str) -> ExtractedReview:
         ...
 
