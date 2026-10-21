@@ -44,4 +44,15 @@ class LLMGateway:
         return await self.resolver.resolve(context)
 
     async def stream(self, prompt: str) -> AsyncIterable[str]:
-        ...
+        model = ModelTier.SMART
+        operation = OperationType.STREAM
+        params = ResolveParams(deadline=config.REQUEST_TIMEOUT)
+
+        context = ResolveContext(
+            model=model,
+            operation=operation,
+            prompt=prompt,
+            params=params
+        )
+
+        return await self.resolver.resolve(context)
