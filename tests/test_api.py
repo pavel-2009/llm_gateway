@@ -29,7 +29,11 @@ class FakeGateway:
         return chunks()
 
 
-def test_generate_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
     monkeypatch.setattr(main, "gateway", FakeGateway())
 
     response = TestClient(main.app).post("/generate", json={"prompt": "hello"})
@@ -40,6 +44,9 @@ def test_generate_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
         "provider": "test",
         "model": "test",
     }
+    assert "request_id=" in caplog.text
+    assert "operation=generate" in caplog.text
+    assert "hello" not in caplog.text
 
 
 def test_extract_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
