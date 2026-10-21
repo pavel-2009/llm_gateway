@@ -41,5 +41,7 @@ class LLMGateway:
             params=params
         )
 
+        return await self.resolver.resolve(context)
+
     async def stream(self, prompt: str) -> AsyncIterable[str]:
         ...
