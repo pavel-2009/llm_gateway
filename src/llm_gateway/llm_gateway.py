@@ -30,7 +30,16 @@ class LLMGateway:
         return await self.resolver.resolve(context)
 
     async def extract(self, prompt: str) -> ExtractedReview:
-        ...
+        model = ModelTier.SMART
+        operation = OperationType.EXTRACT
+        params = ResolveParams(deadline=config.REQUEST_TIMEOUT)
+
+        context = ResolveContext(
+            model=model,
+            operation=operation,
+            prompt=prompt,
+            params=params
+        )
 
     async def stream(self, prompt: str) -> AsyncIterable[str]:
         ...
