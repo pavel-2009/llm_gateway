@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable
 
 from llm_gateway.adapter.contracts import GenerateResponse
+from llm_gateway.resolver.model_resolver import ModelResolver, ModelRegistry
 from llm_gateway.resolver.resolver_context import ResolveContext, ModelTier, ResolveParams
 from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.policy.request_context import OperationType
@@ -10,6 +11,9 @@ from llm_gateway.policy.request_context import OperationType
 
 class LLMGateway:
     """LLM gateway"""
+
+    def __init__(self):
+        self.resolver = ModelResolver(ModelRegistry())
 
     async def generate(self, prompt: str) -> GenerateResponse:
         model = ModelTier.SMART
