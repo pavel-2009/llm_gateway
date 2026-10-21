@@ -1,58 +1,63 @@
-"""LLM gateqway class"""
+"""LLM gateway class."""
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator
 
 from llm_gateway.adapter.contracts import GenerateResponse
-from llm_gateway.resolver.model_resolver import ModelResolver, ModelRegistry
-from llm_gateway.resolver.resolver_context import ResolveContext, ModelTier, ResolveParams
 from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.policy.request_context import OperationType
+from llm_gateway.resolver.model_registry import ModelRegistry
+from llm_gateway.resolver.model_resolver import ModelResolver
+from llm_gateway.resolver.resolver_context import (
+    ModelTier,
+    ResolveContext,
+    ResolveParams,
+)
 
 
 class LLMGateway:
-    """LLM gateway"""
+    """LLM gateway."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.resolver = ModelResolver(ModelRegistry())
 
     async def generate(self, prompt: str) -> GenerateResponse:
-        model = ModelTier.SMART
-        operation = OperationType.GENERATE
-        params = ResolveParams(deadline=config.REQUEST_TIMEOUT)
-
-        context = ResolveContext(
-            model=model,
-            operation=operation,
-            prompt=prompt,
-            params=params
+        result = await self.resolver.resolve(
+            self._build_context(prompt, OperationType.GENERATE)
         )
-
-        return await self.resolver.resolve(context)
+        if not isinstance(result, GenerateResponse):
+            raise TypeError("resolver returned an invalid generation result")
+        return result
 
     async def extract(self, prompt: str) -> ExtractedReview:
-        model = ModelTier.SMART
-        operation = OperationType.EXTRACT
-        params = ResolveParams(deadline=config.REQUEST_TIMEOUT)
+        result = await self.resolver.resolve(
+            self._build_context(prompt, OperationType.EXTRACT)
+        )
+        if not isinstance(result, ExtractedReview):
+            raise TypeError("resolver returned an invalid extraction result")
+        return result
 
-        context = ResolveContext(
-            model=model,
+    def stream(self, prompt: str) -> AsyncIterator[str]:
+        async def iterate() -> AsyncIterator[str]:
+            result = await self.resolver.resolve(
+                self._build_context(prompt, OperationType.STREAM)
+            )
+            if not isinstance(result, AsyncIterable):
+                raise TypeError("resolver returned an invalid stream result")
+            async for chunk in result:
+                yield chunk
+
+        return iterate()
+
+    @staticmethod
+    def _build_context(prompt: str, operation: OperationType) -> ResolveContext:
+        timeout = (
+            config.STREAM_TIMEOUT
+            if operation == OperationType.STREAM
+            else config.REQUEST_TIMEOUT
+        )
+        return ResolveContext(
+            model=ModelTier.SMART,
             operation=operation,
             prompt=prompt,
-            params=params
+            params=ResolveParams(deadline=timeout),
         )
-
-        return await self.resolver.resolve(context)
-
-    async def stream(self, prompt: str) -> AsyncIterable[str]:
-        model = ModelTier.SMART
-        operation = OperationType.STREAM
-        params = ResolveParams(deadline=config.REQUEST_TIMEOUT)
-
-        context = ResolveContext(
-            model=model,
-            operation=operation,
-            prompt=prompt,
-            params=params
-        )
-
-        return await self.resolver.resolve(context)
