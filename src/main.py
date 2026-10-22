@@ -4,12 +4,18 @@ import time
 from uuid import uuid4
 
 from fastapi import FastAPI
+from pydantic import TypeAdapter
 from starlette.responses import StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from llm_gateway.core.logging_context import request_id_context
 from llm_gateway.llm_gateway import LLMGateway
-from llm_gateway.models import ExtractedReview, GenerateResponse, Request
+from llm_gateway.models import (
+    ExtractedReview,
+    GenerateResponse,
+    Request,
+    StreamChunk,
+)
 
 
 logging.basicConfig(
@@ -101,14 +107,27 @@ async def extract(request: Request) -> ExtractedReview:
     return await gateway.extract(request.prompt, request.model)
 
 
-@app.post("/stream", response_class=StreamingResponse, response_model=None)
+@app.post(
+    "/stream",
+    response_class=StreamingResponse,
+    response_model=None,
+    responses={
+        200: {
+            "content": {
+                "text/plain": {
+                    "schema": TypeAdapter(StreamChunk).json_schema(),
+                },
+            },
+        },
+    },
+)
 async def stream(request: Request) -> StreamingResponse:
     logger.info(
         "API operation accepted request_id=%s operation=stream",
         request_id_context.get(),
     )
 
-    async def chunks() -> AsyncIterator[str]:
+    async def chunks() -> AsyncIterator[StreamChunk]:
         async for chunk in gateway.stream(request.prompt, request.model):
             yield chunk
 

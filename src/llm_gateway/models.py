@@ -1,7 +1,7 @@
 """API contracts"""
 
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +17,12 @@ class Request(BaseModel):
 
     prompt: str = Field(..., min_length=1, max_length=10000)
     model: Model = Field(Model.SMART)
+
+
+StreamChunk = Annotated[
+    str,
+    Field(description="Один текстовый фрагмент потокового ответа."),
+]
 
 
 class GenerateResponse(BaseModel):

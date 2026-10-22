@@ -101,6 +101,15 @@ def test_stream_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fake_gateway.model == Model.SMART
 
 
+def test_stream_openapi_response_contract() -> None:
+    response = main.app.openapi()["paths"]["/stream"]["post"]["responses"]["200"]
+
+    assert response["content"]["text/plain"]["schema"] == {
+        "description": "Один текстовый фрагмент потокового ответа.",
+        "type": "string",
+    }
+
+
 def test_prompt_is_required() -> None:
     response = TestClient(main.app).post("/generate", json={})
 
