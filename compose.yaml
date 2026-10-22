@@ -1,0 +1,10 @@
+services:
+  gateway:
+    build:
+      context: .
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
