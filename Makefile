@@ -1,2 +1,5 @@
 test:
-	uv run pytest tests/ --cov=src --cov-report=term-missing --disable-warnings -q
+	uv run pytest tests/ 
+
+coverage:
+	uv run pytest --cov=src/llm_gateway --cov-report=term-missing tests/
