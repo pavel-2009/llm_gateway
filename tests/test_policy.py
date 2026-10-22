@@ -102,7 +102,14 @@ async def test_pipeline_logs_retry_decision(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_retries_retryable_generation_error() -> None:
+async def test_pipeline_retries_retryable_generation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "MAX_RETRIES", 1)
+    monkeypatch.setattr(config, "RETRY_BASE_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_MAX_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_JITTER", 0)
+
     class FakeProvider:
         def __init__(self) -> None:
             self.attempts = 0
@@ -116,11 +123,7 @@ async def test_pipeline_retries_retryable_generation_error() -> None:
             return GenerateResponse(text="ok", provider="openai", model="test")
 
     provider = FakeProvider()
-    pipeline = BasePolicyPipeline(
-        ErrorPolicy(),
-        RetryPolicy(max_retries=1, base_delay=0, max_delay=0, jitter=0),
-        provider,
-    )
+    pipeline = BasePolicyPipeline(provider)
 
     result = await pipeline.execute(_context(OperationType.GENERATE))
 
@@ -131,7 +134,14 @@ async def test_pipeline_retries_retryable_generation_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_stops_after_retry_limit() -> None:
+async def test_pipeline_stops_after_retry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "MAX_RETRIES", 2)
+    monkeypatch.setattr(config, "RETRY_BASE_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_MAX_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_JITTER", 0)
+
     class FakeProvider:
         def __init__(self) -> None:
             self.attempts = 0
@@ -141,11 +151,7 @@ async def test_pipeline_stops_after_retry_limit() -> None:
             raise ProviderTimeoutError("timed out", retryable=True)
 
     provider = FakeProvider()
-    pipeline = BasePolicyPipeline(
-        ErrorPolicy(),
-        RetryPolicy(max_retries=2, base_delay=0, max_delay=0, jitter=0),
-        provider,
-    )
+    pipeline = BasePolicyPipeline(provider)
     context = _context(OperationType.GENERATE)
 
     with pytest.raises(ProviderTimeoutError):
@@ -157,7 +163,14 @@ async def test_pipeline_stops_after_retry_limit() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.asyncio
-async def test_pipeline_retries_stream_error_before_first_chunk() -> None:
+async def test_pipeline_retries_stream_error_before_first_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "MAX_RETRIES", 1)
+    monkeypatch.setattr(config, "RETRY_BASE_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_MAX_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_JITTER", 0)
+
     class FakeProvider:
         def __init__(self) -> None:
             self.attempts = 0
@@ -175,11 +188,7 @@ async def test_pipeline_retries_stream_error_before_first_chunk() -> None:
             return chunks()
 
     provider = FakeProvider()
-    pipeline = BasePolicyPipeline(
-        ErrorPolicy(),
-        RetryPolicy(max_retries=1, base_delay=0, max_delay=0, jitter=0),
-        provider,
-    )
+    pipeline = BasePolicyPipeline(provider)
     context = _context(OperationType.STREAM)
 
     result = await pipeline.execute(context)
@@ -220,7 +229,14 @@ async def test_pipeline_does_not_enforce_overall_stream_deadline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_does_not_retry_stream_after_emitting_chunk() -> None:
+async def test_pipeline_does_not_retry_stream_after_emitting_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "MAX_RETRIES", 1)
+    monkeypatch.setattr(config, "RETRY_BASE_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_MAX_DELAY", 0)
+    monkeypatch.setattr(config, "RETRY_JITTER", 0)
+
     class FakeProvider:
         def __init__(self) -> None:
             self.attempts = 0
@@ -237,11 +253,7 @@ async def test_pipeline_does_not_retry_stream_after_emitting_chunk() -> None:
             return chunks()
 
     provider = FakeProvider()
-    pipeline = BasePolicyPipeline(
-        ErrorPolicy(),
-        RetryPolicy(max_retries=1, base_delay=0, max_delay=0, jitter=0),
-        provider,
-    )
+    pipeline = BasePolicyPipeline(provider)
     context = _context(OperationType.STREAM)
 
     result = await pipeline.execute(context)
