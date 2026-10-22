@@ -4,14 +4,12 @@ import time
 from uuid import uuid4
 
 from fastapi import FastAPI
-from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from llm_gateway.adapter.contracts import GenerateResponse
-from llm_gateway.core.config import ExtractedReview
 from llm_gateway.core.logging_context import request_id_context
 from llm_gateway.llm_gateway import LLMGateway
+from llm_gateway.models import ExtractedReview, GenerateResponse, Request
 
 
 logging.basicConfig(
@@ -19,10 +17,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-class PromptRequest(BaseModel):
-    prompt: str
 
 
 class RequestLoggingMiddleware:
@@ -89,33 +83,33 @@ app.add_middleware(RequestLoggingMiddleware)
 gateway = LLMGateway()
 
 
-@app.post("/generate")
-async def generate(request: PromptRequest) -> GenerateResponse:
+@app.post("/generate", response_model=GenerateResponse)
+async def generate(request: Request) -> GenerateResponse:
     logger.info(
         "API operation accepted request_id=%s operation=generate",
         request_id_context.get(),
     )
-    return await gateway.generate(request.prompt)
+    return await gateway.generate(request.prompt, request.model)
 
 
-@app.post("/extract")
-async def extract(request: PromptRequest) -> ExtractedReview:
+@app.post("/extract", response_model=ExtractedReview)
+async def extract(request: Request) -> ExtractedReview:
     logger.info(
         "API operation accepted request_id=%s operation=extract",
         request_id_context.get(),
     )
-    return await gateway.extract(request.prompt)
+    return await gateway.extract(request.prompt, request.model)
 
 
-@app.post("/stream")
-async def stream(request: PromptRequest) -> StreamingResponse:
+@app.post("/stream", response_class=StreamingResponse, response_model=None)
+async def stream(request: Request) -> StreamingResponse:
     logger.info(
         "API operation accepted request_id=%s operation=stream",
         request_id_context.get(),
     )
 
     async def chunks() -> AsyncIterator[str]:
-        async for chunk in gateway.stream(request.prompt):
+        async for chunk in gateway.stream(request.prompt, request.model):
             yield chunk
 
     return StreamingResponse(chunks(), media_type="text/plain")
