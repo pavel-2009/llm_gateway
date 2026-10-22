@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from fastapi.testclient import TestClient
 import pytest
 
-import main
+import llm_gateway.app as main
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview
 from llm_gateway.models import Model
