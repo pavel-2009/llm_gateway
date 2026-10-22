@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from llm_gateway.adapter.contracts import GenerateResponse, Providers
 from llm_gateway.core.config import ExtractedReview
+from llm_gateway.models import Model, Request
 
 
 def test_generate_response_accepts_valid_data() -> None:
@@ -17,6 +18,46 @@ def test_generate_response_accepts_valid_data() -> None:
 	assert response.text == "Generated text"
 	assert response.provider == Providers.OPENAI
 	assert response.model == "test-model"
+
+
+@pytest.mark.parametrize(
+	"payload",
+	[
+		{"prompt": ""},
+		{"prompt": "prompt", "model": "unknown"},
+		{"prompt": "prompt", "unexpected": True},
+	],
+)
+def test_request_rejects_invalid_data(payload: dict[str, object]) -> None:
+	with pytest.raises(ValidationError):
+		Request.model_validate(payload)
+
+
+def test_request_defaults_to_smart_model() -> None:
+	request = Request(prompt="prompt")
+
+	assert request.model is Model.SMART
+
+
+@pytest.mark.parametrize(
+	"payload",
+	[
+		{"text": "", "provider": "openai", "model": "test-model"},
+		{"text": "answer", "provider": "unknown", "model": "test-model"},
+		{"text": "answer", "provider": "openai", "model": ""},
+		{
+			"text": "answer",
+			"provider": "openai",
+			"model": "test-model",
+			"unexpected": True,
+		},
+	],
+)
+def test_generate_response_rejects_invalid_data(
+	payload: dict[str, object],
+) -> None:
+	with pytest.raises(ValidationError):
+		GenerateResponse.model_validate(payload)
 
 
 def test_extracted_review_accepts_valid_data(valid_review: ExtractedReview) -> None:

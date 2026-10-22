@@ -7,6 +7,7 @@ import pytest
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.llm_gateway import LLMGateway
+from llm_gateway.models import Model
 from llm_gateway.policy.request_context import OperationType
 from llm_gateway.resolver.model_resolver import RESOLVER_RESULT
 from llm_gateway.resolver.resolver_context import ResolveContext
@@ -35,6 +36,19 @@ async def test_generate_returns_generation_response() -> None:
     assert resolver.context is not None
     assert resolver.context.operation == OperationType.GENERATE
     assert resolver.context.params.deadline == config.REQUEST_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_generate_uses_requested_model() -> None:
+    expected = GenerateResponse(text="answer", provider="openai", model="test")
+    gateway = LLMGateway()
+    resolver = FakeResolver(expected)
+    gateway.resolver = resolver
+
+    await gateway.generate("prompt", Model.MEDIUM)
+
+    assert resolver.context is not None
+    assert resolver.context.model is Model.MEDIUM
 
 
 @pytest.mark.asyncio
