@@ -6,7 +6,6 @@ import time
 from uuid import uuid4
 
 from fastapi import FastAPI
-from pydantic import TypeAdapter
 from starlette.responses import StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -16,6 +15,7 @@ from llm_gateway.models import (
     ExtractedReview,
     GenerateResponse,
     Request,
+    StreamComplete,
     StreamChunk,
 )
 
@@ -115,9 +115,19 @@ async def extract(request: Request) -> ExtractedReview:
     response_model=None,
     responses={
         200: {
+            "description": (
+                "Server-Sent Events: `chunk` для каждого фрагмента и `done` "
+                "с итоговым количеством чанков и символов."
+            ),
             "content": {
-                "text/plain": {
-                    "schema": TypeAdapter(StreamChunk).json_schema(),
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                    "example": (
+                        'event: chunk\ndata: {"type":"chunk","index":1,'
+                        '"content":"Hello"}\n\n'
+                        'event: done\ndata: {"type":"done","chunks":1,'
+                        '"output_chars":5}\n\n'
+                    ),
                 },
             },
         },
@@ -129,8 +139,25 @@ async def stream(request: Request) -> StreamingResponse:
         request_id_context.get(),
     )
 
-    async def chunks() -> AsyncIterator[StreamChunk]:
+    async def chunks() -> AsyncIterator[str]:
+        chunk_count = 0
+        output_chars = 0
         async for chunk in gateway.stream(request.prompt, request.model):
-            yield chunk
+            chunk_count += 1
+            output_chars += len(chunk)
+            yield (
+                "event: chunk\n"
+                f"data: {StreamChunk(index=chunk_count, content=chunk).model_dump_json()}"
+                "\n\n"
+            )
+        completed = StreamComplete(
+            chunks=chunk_count,
+            output_chars=output_chars,
+        )
+        yield f"event: done\ndata: {completed.model_dump_json()}\n\n"
 
-    return StreamingResponse(chunks(), media_type="text/plain")
+    return StreamingResponse(
+        chunks(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

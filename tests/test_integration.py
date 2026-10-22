@@ -257,5 +257,9 @@ def test_stream_failure_falls_back_before_first_chunk(
         response = client.post("/stream", json={"prompt": "hello"})
 
     assert response.status_code == 200
-    assert response.text == "fallback stream"
+    assert response.text == (
+        'event: chunk\ndata: {"type":"chunk","index":1,"content":"fallback "}\n\n'
+        'event: chunk\ndata: {"type":"chunk","index":2,"content":"stream"}\n\n'
+        'event: done\ndata: {"type":"done","chunks":2,"output_chars":15}\n\n'
+    )
     assert attempts == [("claude", "stream"), ("ollama", "stream")]

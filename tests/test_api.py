@@ -96,18 +96,43 @@ def test_stream_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     response = TestClient(main.app).post("/stream", json={"prompt": "hello"})
 
     assert response.status_code == 200
-    assert response.text == "hello!"
-    assert response.headers["content-type"].startswith("text/plain")
+    events = response.text.strip().split("\n\n")
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert events == [
+        'event: chunk\ndata: {"type":"chunk","index":1,"content":"hello"}',
+        'event: chunk\ndata: {"type":"chunk","index":2,"content":"!"}',
+        'event: done\ndata: {"type":"done","chunks":2,"output_chars":6}',
+    ]
     assert fake_gateway.model == Model.SMART
 
 
 def test_stream_openapi_response_contract() -> None:
     response = main.app.openapi()["paths"]["/stream"]["post"]["responses"]["200"]
 
-    assert response["content"]["text/plain"]["schema"] == {
-        "description": "Один текстовый фрагмент потокового ответа.",
-        "type": "string",
-    }
+    assert "text/event-stream" in response["content"]
+    assert "количеством чанков и символов" in response["description"]
+
+
+def test_empty_stream_reports_zero_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    class EmptyGateway(FakeGateway):
+        def stream(
+            self,
+            prompt: str,
+            model: Model = Model.SMART,
+        ) -> AsyncIterator[str]:
+            async def chunks() -> AsyncIterator[str]:
+                for chunk in ():
+                    yield chunk
+
+            return chunks()
+
+    monkeypatch.setattr(main, "gateway", EmptyGateway())
+    response = TestClient(main.app).post("/stream", json={"prompt": "hello"})
+
+    assert response.status_code == 200
+    assert response.text == (
+        'event: done\ndata: {"type":"done","chunks":0,"output_chars":0}\n\n'
+    )
 
 
 def test_prompt_is_required() -> None:

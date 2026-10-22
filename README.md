@@ -23,10 +23,11 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-В `.env` задаются те же настройки, что и при локальном запуске. Пример
-направляет запросы Ollama на `host.docker.internal`, то есть на Ollama,
-запущенную на хост-машине. Убедитесь, что Ollama запущена и модель из
-`OLLAMA_MODEL` доступна. Для проверки доступности сервера выполните:
+Compose запускает Ollama, сохраняет её модели в volume `ollama_data` и
+загружает `qwen3:8b` перед запуском шлюза. В Compose адрес Ollama автоматически
+переопределяется на `http://ollama:11434`; `OLLAMA_BASE_URL` из `.env` остаётся
+полезен для локального запуска шлюза вне Docker. Для проверки доступности
+сервера выполните:
 
 ```bash
 curl -f http://localhost:8000/openapi.json
@@ -47,8 +48,8 @@ docker compose logs -f gateway
 docker compose down
 ```
 
-В Compose уже настроен адрес `host.docker.internal` для доступа к хосту, в том
-числе на Linux Docker Engine.
+При `docker compose down -v` сохранённая модель также удаляется, и при следующем
+запуске будет загружена заново.
 
 ## Настройки
 
