@@ -4,5 +4,38 @@ services:
       context: .
     env_file:
       - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: qwen3:8b
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
+    depends_on:
+      ollama-model:
+        condition: service_completed_successfully
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  ollama-model:
+    image: ollama/ollama
+    entrypoint: ["/bin/ollama"]
+    command: ["pull", "qwen3:8b"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  ollama_data:
