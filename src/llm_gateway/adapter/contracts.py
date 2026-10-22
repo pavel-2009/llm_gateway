@@ -1,17 +1,11 @@
 """Base models and contracts for providers and adapters."""
 
-from enum import Enum
+from llm_gateway.models import GenerateResponse
 
-from pydantic import BaseModel
+__all__ = ["GenerateResponse", "Providers"]
 
 
 class Providers:
     OPENAI = "openai"
     CLAUDE = "claude"
     OLLAMA = "ollama"
-
-
-class GenerateResponse(BaseModel):
-    text: str
-    provider: str
-    model: str

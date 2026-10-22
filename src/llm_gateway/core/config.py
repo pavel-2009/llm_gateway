@@ -1,21 +1,8 @@
 """App configuration."""
 
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings
 
-
-class ExtractedReview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sentiment: Literal["positive", "negative", "mixed", "neutral"]
-    topics: list[str]
-    rating: int = Field(
-        description="Оценка от 1 до 5, если известна; иначе 0.",
-        ge=0,
-        le=5,
-    )
+from llm_gateway.models import ExtractedReview
 
 
 EXTRACT_SCHEMA = ExtractedReview.model_json_schema()

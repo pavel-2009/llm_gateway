@@ -6,11 +6,11 @@ import logging
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.models import Model
 from llm_gateway.policy.request_context import OperationType
 from llm_gateway.resolver.model_registry import ModelRegistry
 from llm_gateway.resolver.model_resolver import ModelResolver
 from llm_gateway.resolver.resolver_context import (
-    ModelTier,
     ResolveContext,
     ResolveParams,
 )
@@ -24,7 +24,11 @@ class LLMGateway:
     def __init__(self) -> None:
         self.resolver = ModelResolver(ModelRegistry())
 
-    async def generate(self, prompt: str) -> GenerateResponse:
+    async def generate(
+        self,
+        prompt: str,
+        model: Model = Model.SMART,
+    ) -> GenerateResponse:
         request_id = request_id_context.get()
         logger.info(
             "Gateway operation started request_id=%s operation=%s",
@@ -32,7 +36,7 @@ class LLMGateway:
             OperationType.GENERATE.value,
         )
         result = await self.resolver.resolve(
-            self._build_context(prompt, OperationType.GENERATE)
+            self._build_context(prompt, OperationType.GENERATE, model)
         )
         if not isinstance(result, GenerateResponse):
             raise TypeError("resolver returned an invalid generation result")
@@ -47,7 +51,11 @@ class LLMGateway:
         )
         return result
 
-    async def extract(self, prompt: str) -> ExtractedReview:
+    async def extract(
+        self,
+        prompt: str,
+        model: Model = Model.SMART,
+    ) -> ExtractedReview:
         request_id = request_id_context.get()
         logger.info(
             "Gateway operation started request_id=%s operation=%s",
@@ -55,7 +63,7 @@ class LLMGateway:
             OperationType.EXTRACT.value,
         )
         result = await self.resolver.resolve(
-            self._build_context(prompt, OperationType.EXTRACT)
+            self._build_context(prompt, OperationType.EXTRACT, model)
         )
         if not isinstance(result, ExtractedReview):
             raise TypeError("resolver returned an invalid extraction result")
@@ -70,7 +78,11 @@ class LLMGateway:
         )
         return result
 
-    def stream(self, prompt: str) -> AsyncIterator[str]:
+    def stream(
+        self,
+        prompt: str,
+        model: Model = Model.SMART,
+    ) -> AsyncIterator[str]:
         async def iterate() -> AsyncIterator[str]:
             request_id = request_id_context.get()
             chunks = 0
@@ -81,7 +93,7 @@ class LLMGateway:
                 OperationType.STREAM.value,
             )
             result = await self.resolver.resolve(
-                self._build_context(prompt, OperationType.STREAM)
+                self._build_context(prompt, OperationType.STREAM, model)
             )
             if not isinstance(result, AsyncIterable):
                 raise TypeError("resolver returned an invalid stream result")
@@ -112,14 +124,18 @@ class LLMGateway:
         return iterate()
 
     @staticmethod
-    def _build_context(prompt: str, operation: OperationType) -> ResolveContext:
+    def _build_context(
+        prompt: str,
+        operation: OperationType,
+        model: Model,
+    ) -> ResolveContext:
         timeout = (
             config.STREAM_TIMEOUT
             if operation == OperationType.STREAM
             else config.REQUEST_TIMEOUT
         )
         return ResolveContext(
-            model=ModelTier.SMART,
+            model=model,
             operation=operation,
             prompt=prompt,
             params=ResolveParams(deadline=timeout),
