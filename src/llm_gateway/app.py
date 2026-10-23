@@ -78,6 +78,7 @@ class RequestLoggingMiddleware:
         try:
             await self.app(scope, receive, log_response_start)
         except Exception as error:
+            status_code = _error_details(error)[0]
             logger.error(
                 "HTTP request failed request_id=%s method=%s path=%s "
                 "error_type=%s",
@@ -120,6 +121,11 @@ def _error_details(error: Exception) -> tuple[int, str, str]:
     if isinstance(error, (asyncio.TimeoutError, ProviderTimeoutError)):
         return 504, "gateway_timeout", "The request timed out."
     if isinstance(error, AllModelsUnavailableError):
+        if error.failures and all(
+            isinstance(failure, ProviderTimeoutError)
+            for failure in error.failures.values()
+        ):
+            return 504, "gateway_timeout", "The request timed out."
         if error.failures and all(
             isinstance(failure, LLMProviderError)
             and failure.category == "invalid_response"
