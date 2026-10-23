@@ -3,6 +3,13 @@
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 
+_METRIC_ROUTES = frozenset({"/generate", "/extract", "/stream"})
+
+
+def _route_label(path: str) -> str:
+    return path if path in _METRIC_ROUTES else "/unmatched"
+
+
 class PrometheusClient:
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         self.registry = registry or CollectorRegistry()
@@ -25,16 +32,18 @@ class PrometheusClient:
             registry=self.registry,
         )
 
-    def request_started(self, method: str, route: str) -> None:
+    def request_started(self, method: str, path: str) -> None:
+        route = _route_label(path)
         self.http_requests_in_progress.labels(method, route).inc()
 
-    def request_finished(
+    def request_completed(
         self,
         method: str,
-        route: str,
+        path: str,
         status_code: int,
         duration_seconds: float,
     ) -> None:
+        route = _route_label(path)
         self.http_requests_in_progress.labels(method, route).dec()
         self.http_requests_total.labels(method, route, str(status_code)).inc()
         self.http_request_duration_seconds.labels(method, route).observe(

@@ -9,7 +9,8 @@ from uuid import uuid4
 from fastapi import FastAPI, Request as HTTPRequest
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.responses import StreamingResponse
+from prometheus_client import CONTENT_TYPE_LATEST
+from starlette.responses import Response, StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from llm_gateway.adapter.errors import (
@@ -20,6 +21,7 @@ from llm_gateway.adapter.errors import (
 )
 from llm_gateway.core.logging_context import request_id_context
 from llm_gateway.llm_gateway import LLMGateway
+from llm_gateway.prometheus import prometheus
 from llm_gateway.models import (
     ExtractedReview,
     GenerateResponse,
@@ -28,8 +30,6 @@ from llm_gateway.models import (
     StreamChunk,
     StreamError,
 )
-
-from llm_gateway.prometheus import prometheus
 
 
 logging.basicConfig(
@@ -59,14 +59,15 @@ class RequestLoggingMiddleware:
         path = scope["path"]
         started_at = time.monotonic()
         status_code = 500
+        track_metrics = path != "/metrics"
+        if track_metrics:
+            prometheus.request_started(method, path)
         logger.info(
             "HTTP request started request_id=%s method=%s path=%s",
             request_id,
             method,
             path,
         )
-
-        prometheus.request_started(method, path)
 
         async def log_response_start(message: Message) -> None:
             nonlocal status_code
@@ -97,13 +98,22 @@ class RequestLoggingMiddleware:
                 status_code,
                 duration * 1000,
             )
-            prometheus.request_completed(method, path, status_code, duration)
+            if track_metrics:
+                prometheus.request_completed(method, path, status_code, duration)
             request_id_context.reset(token)
 
 
 app = FastAPI(title="LLM Gateway")
 app.add_middleware(RequestLoggingMiddleware)
 gateway = LLMGateway()
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    return Response(
+        content=prometheus.render(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 
 def _error_details(error: Exception) -> tuple[int, str, str]:
