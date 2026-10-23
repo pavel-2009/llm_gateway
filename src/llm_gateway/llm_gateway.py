@@ -8,6 +8,7 @@ from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.core.logging_context import request_id_context
 from llm_gateway.models import Model
 from llm_gateway.policy.request_context import OperationType
+from llm_gateway.prometheus import prometheus
 from llm_gateway.resolver.model_registry import ModelRegistry
 from llm_gateway.resolver.model_resolver import ModelResolver
 from llm_gateway.resolver.resolver_context import (
@@ -29,54 +30,88 @@ class LLMGateway:
         prompt: str,
         model: Model = Model.SMART,
     ) -> GenerateResponse:
+        started_at = prometheus.llm_operation_started(
+            OperationType.GENERATE.value, model.value
+        )
+        succeeded = False
         request_id = request_id_context.get()
         logger.info(
             "Gateway operation started request_id=%s operation=%s",
             request_id,
             OperationType.GENERATE.value,
         )
-        result = await self.resolver.resolve(
-            self._build_context(prompt, OperationType.GENERATE, model)
-        )
-        if not isinstance(result, GenerateResponse):
-            raise TypeError("resolver returned an invalid generation result")
-        logger.info(
-            "Gateway operation completed request_id=%s operation=%s "
-            "provider=%s model=%s output_chars=%s",
-            request_id,
-            OperationType.GENERATE.value,
-            result.provider,
-            result.model,
-            len(result.text),
-        )
-        return result
+        output_characters = 0
+        try:
+            result = await self.resolver.resolve(
+                self._build_context(prompt, OperationType.GENERATE, model)
+            )
+            if not isinstance(result, GenerateResponse):
+                raise TypeError("resolver returned an invalid generation result")
+            output_characters = len(result.text)
+            logger.info(
+                "Gateway operation completed request_id=%s operation=%s "
+                "provider=%s model=%s output_chars=%s",
+                request_id,
+                OperationType.GENERATE.value,
+                result.provider,
+                result.model,
+                output_characters,
+            )
+            succeeded = True
+            return result
+        finally:
+            prometheus.llm_operation_completed(
+                OperationType.GENERATE.value,
+                model.value,
+                started_at,
+                outcome="success" if succeeded else "error",
+                input_characters=len(prompt),
+                output_characters=output_characters,
+            )
 
     async def extract(
         self,
         prompt: str,
         model: Model = Model.SMART,
     ) -> ExtractedReview:
+        started_at = prometheus.llm_operation_started(
+            OperationType.EXTRACT.value, model.value
+        )
+        succeeded = False
         request_id = request_id_context.get()
         logger.info(
             "Gateway operation started request_id=%s operation=%s",
             request_id,
             OperationType.EXTRACT.value,
         )
-        result = await self.resolver.resolve(
-            self._build_context(prompt, OperationType.EXTRACT, model)
-        )
-        if not isinstance(result, ExtractedReview):
-            raise TypeError("resolver returned an invalid extraction result")
-        logger.info(
-            "Gateway operation completed request_id=%s operation=%s "
-            "sentiment=%s topics_count=%s rating=%s",
-            request_id,
-            OperationType.EXTRACT.value,
-            result.sentiment,
-            len(result.topics),
-            result.rating,
-        )
-        return result
+        output_characters = 0
+        try:
+            result = await self.resolver.resolve(
+                self._build_context(prompt, OperationType.EXTRACT, model)
+            )
+            if not isinstance(result, ExtractedReview):
+                raise TypeError("resolver returned an invalid extraction result")
+            output_characters = len(result.model_dump_json())
+            logger.info(
+                "Gateway operation completed request_id=%s operation=%s "
+                "sentiment=%s topics_count=%s rating=%s",
+                request_id,
+                OperationType.EXTRACT.value,
+                result.sentiment,
+                len(result.topics),
+                result.rating,
+            )
+            succeeded = True
+            return result
+        finally:
+            prometheus.llm_operation_completed(
+                OperationType.EXTRACT.value,
+                model.value,
+                started_at,
+                outcome="success" if succeeded else "error",
+                input_characters=len(prompt),
+                output_characters=output_characters,
+            )
 
     def stream(
         self,
@@ -84,6 +119,10 @@ class LLMGateway:
         model: Model = Model.SMART,
     ) -> AsyncIterator[str]:
         async def iterate() -> AsyncIterator[str]:
+            started_at = prometheus.llm_operation_started(
+                OperationType.STREAM.value, model.value
+            )
+            succeeded = False
             request_id = request_id_context.get()
             chunks = 0
             output_chars = 0
@@ -92,12 +131,12 @@ class LLMGateway:
                 request_id,
                 OperationType.STREAM.value,
             )
-            result = await self.resolver.resolve(
-                self._build_context(prompt, OperationType.STREAM, model)
-            )
-            if not isinstance(result, AsyncIterable):
-                raise TypeError("resolver returned an invalid stream result")
             try:
+                result = await self.resolver.resolve(
+                    self._build_context(prompt, OperationType.STREAM, model)
+                )
+                if not isinstance(result, AsyncIterable):
+                    raise TypeError("resolver returned an invalid stream result")
                 async for chunk in result:
                     chunks += 1
                     output_chars += len(chunk)
@@ -112,14 +151,26 @@ class LLMGateway:
                     type(error).__name__,
                 )
                 raise
-            logger.info(
-                "Gateway operation completed request_id=%s operation=%s "
-                "chunks=%s output_chars=%s",
-                request_id,
-                OperationType.STREAM.value,
-                chunks,
-                output_chars,
-            )
+            else:
+                logger.info(
+                    "Gateway operation completed request_id=%s operation=%s "
+                    "chunks=%s output_chars=%s",
+                    request_id,
+                    OperationType.STREAM.value,
+                    chunks,
+                    output_chars,
+                )
+                succeeded = True
+            finally:
+                prometheus.llm_operation_completed(
+                    OperationType.STREAM.value,
+                    model.value,
+                    started_at,
+                    outcome="success" if succeeded else "error",
+                    input_characters=len(prompt),
+                    output_characters=output_chars,
+                    stream_chunks=chunks,
+                )
 
         return iterate()
 
