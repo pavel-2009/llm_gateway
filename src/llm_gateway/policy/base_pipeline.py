@@ -1,7 +1,7 @@
 """Base handling pipeline for LLM Gateway."""
 
 import asyncio
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator
 import logging
 from typing import cast
 
@@ -11,10 +11,12 @@ from llm_gateway.core.config import ExtractedReview
 from llm_gateway.policy.error_policy import ErrorPolicy
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
+from llm_gateway.prometheus import prometheus
 
 
 PipelineResult = GenerateResponse | ExtractedReview | AsyncIterable[str]
 logger = logging.getLogger(__name__)
+
 
 class BasePolicyPipeline:
     """Execute provider operations with error and retry policies."""
@@ -22,10 +24,13 @@ class BasePolicyPipeline:
     def __init__(
         self,
         provider: LLMProvider,
+        provider_name: str = "unknown",
     ) -> None:
         self.error_policy = ErrorPolicy()
         self.retry_policy = RetryPolicy()
         self.provider = provider
+        self.provider_name = provider_name
+        self.model = str(getattr(provider, "model", "unknown"))
 
     async def execute(
         self,
@@ -147,6 +152,11 @@ class BasePolicyPipeline:
             context.retries_made,
             delay,
         )
+        prometheus.provider_retry_scheduled(
+            self.provider_name,
+            context.operation.value,
+            self.model,
+        )
         await asyncio.sleep(delay)
 
     async def _execute_operation(
@@ -156,9 +166,64 @@ class BasePolicyPipeline:
         """Execute the operation with the given prompt and model."""
 
         if context.operation == OperationType.GENERATE:
-            return await self.provider.generate(context.prompt)
+            started_at = prometheus.provider_operation_started(
+                self.provider_name,
+                context.operation.value,
+                self.model,
+            )
+            succeeded = False
+            try:
+                result = await self.provider.generate(context.prompt)
+                succeeded = True
+                return result
+            finally:
+                prometheus.provider_operation_completed(
+                    self.provider_name,
+                    context.operation.value,
+                    self.model,
+                    started_at,
+                    outcome="success" if succeeded else "error",
+                )
         if context.operation == OperationType.STREAM:
-            return self.provider.stream(context.prompt)
+
+            async def measured_stream() -> AsyncIterator[str]:
+                started_at = prometheus.provider_operation_started(
+                    self.provider_name,
+                    context.operation.value,
+                    self.model,
+                )
+                succeeded = False
+                try:
+                    async for chunk in self.provider.stream(context.prompt):
+                        yield chunk
+                    succeeded = True
+                finally:
+                    prometheus.provider_operation_completed(
+                        self.provider_name,
+                        context.operation.value,
+                        self.model,
+                        started_at,
+                        outcome="success" if succeeded else "error",
+                    )
+
+            return measured_stream()
         if context.operation == OperationType.EXTRACT:
-            return await self.provider.extract(context.prompt)
+            started_at = prometheus.provider_operation_started(
+                self.provider_name,
+                context.operation.value,
+                self.model,
+            )
+            succeeded = False
+            try:
+                result = await self.provider.extract(context.prompt)
+                succeeded = True
+                return result
+            finally:
+                prometheus.provider_operation_completed(
+                    self.provider_name,
+                    context.operation.value,
+                    self.model,
+                    started_at,
+                    outcome="success" if succeeded else "error",
+                )
         raise ValueError(f"Unsupported operation: {context.operation}")
