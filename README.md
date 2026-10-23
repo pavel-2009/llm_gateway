@@ -33,6 +33,12 @@ Compose запускает Ollama, сохраняет её модели в volum
 curl -f http://localhost:8000/openapi.json
 ```
 
+Метрики приложения доступны на `http://localhost:8000/metrics`, а веб-интерфейс
+Prometheus — на `http://localhost:9090`. При первом запуске Compose ждёт, пока
+сервис `ollama-model` скачает модель; до окончания загрузки gateway и его
+метрики не запускаются. Порт gateway внутри Compose фиксирован на `8000`, а
+переменная `PORT` задаёт порт публикации на хосте.
+
 Для проверки генерации через Ollama:
 
 ```bash
