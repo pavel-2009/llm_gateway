@@ -228,7 +228,7 @@ def test_hung_model_times_out_and_is_cancelled(
     with client:
         response = client.post("/generate", json={"prompt": "hello"})
 
-    assert response.status_code == 500
+    assert response.status_code == 504
     assert cancelled == [True]
     assert attempts == [("ollama", "generate")]
 
@@ -263,3 +263,55 @@ def test_stream_failure_falls_back_before_first_chunk(
         'event: done\ndata: {"type":"done","chunks":2,"output_chars":15}\n\n'
     )
     assert attempts == [("claude", "stream"), ("ollama", "stream")]
+
+
+def test_stream_failure_after_first_chunk_does_not_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "MAX_RETRIES", 0)
+    client, attempts = setup_gateway(
+        monkeypatch,
+        (("claude", "primary"), ("ollama", "fallback")),
+        {
+            "claude": [],
+            "ollama": [("fallback",)],
+        },
+    )
+
+    class FailingStreamProvider:
+        def stream(self, prompt: str) -> AsyncIterator[str]:
+            async def chunks() -> AsyncIterator[str]:
+                attempts.append(("claude", "stream"))
+                yield "first"
+                raise ProviderTimeoutError(
+                    "private provider failure",
+                    provider="claude",
+                    operation="streaming",
+                    retryable=True,
+                )
+
+            return chunks()
+
+    def create_provider(name: str, model: str) -> object:
+        if name == "claude":
+            return FailingStreamProvider()
+        return FakeProvider(name, [("fallback",)], attempts)
+
+    monkeypatch.setattr(
+        gateway_app.gateway.resolver.model_registry,
+        "create_provider",
+        create_provider,
+    )
+
+    with client:
+        response = client.post("/stream", json={"prompt": "hello"})
+
+    assert response.status_code == 200
+    assert (
+        'event: chunk\ndata: {"type":"chunk","index":1,"content":"first"}'
+        in response.text
+    )
+    assert '"code":"gateway_timeout"' in response.text
+    assert "event: done\n" not in response.text
+    assert "private" not in response.text
+    assert attempts == [("claude", "stream")]

@@ -6,6 +6,11 @@ from fastapi.testclient import TestClient
 import pytest
 
 import llm_gateway.app as main
+from llm_gateway.adapter.errors import (
+    AIExtractionError,
+    AllModelsUnavailableError,
+    InvalidRequestError,
+)
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview
 from llm_gateway.models import Model
@@ -139,3 +144,159 @@ def test_prompt_is_required() -> None:
     response = TestClient(main.app).post("/generate", json={})
 
     assert response.status_code == 422
+
+
+def invalid_structured_response() -> AllModelsUnavailableError:
+    error = AIExtractionError("private model output")
+    error.category = "invalid_response"
+    return AllModelsUnavailableError({"ollama": error})
+
+
+def test_structured_extraction_error_is_explained_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingExtractionGateway(FakeGateway):
+        async def extract(
+            self,
+            prompt: str,
+            model: Model = Model.SMART,
+        ) -> ExtractedReview:
+            raise invalid_structured_response()
+
+    monkeypatch.setattr(main, "gateway", FailingExtractionGateway())
+    response = TestClient(main.app, raise_server_exceptions=False).post(
+        "/extract",
+        json={"prompt": "review"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "detail": "The configured model providers returned invalid responses."
+    }
+    assert "private model output" not in response.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"prompt": "   "},
+        {"prompt": "valid", "model": "unknown"},
+        {"prompt": "x" * 10001},
+        {"prompt": "valid", "unexpected": True},
+    ],
+)
+def test_invalid_request_contract_returns_sanitized_422(
+    payload: dict[str, object],
+) -> None:
+    response = TestClient(main.app).post("/generate", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid request."}
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "detail"),
+    [
+        (TimeoutError("private timeout"), 504, "The request timed out."),
+        (
+            AllModelsUnavailableError(
+                {"ollama": RuntimeError("private provider secret")}
+            ),
+            503,
+            "All configured model providers are unavailable.",
+        ),
+        (
+            invalid_structured_response(),
+            502,
+            "The configured model providers returned invalid responses.",
+        ),
+        (
+            InvalidRequestError("private provider error", provider="ollama"),
+            400,
+            "The model provider rejected the request.",
+        ),
+        (
+            RuntimeError("private internal details"),
+            500,
+            "An internal server error occurred.",
+        ),
+    ],
+)
+def test_gateway_errors_return_safe_http_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status_code: int,
+    detail: str,
+) -> None:
+    class FailingGateway(FakeGateway):
+        async def generate(
+            self,
+            prompt: str,
+            model: Model = Model.SMART,
+        ) -> GenerateResponse:
+            raise error
+
+    monkeypatch.setattr(main, "gateway", FailingGateway())
+    response = TestClient(main.app, raise_server_exceptions=False).post(
+        "/generate",
+        json={"prompt": "hello"},
+    )
+
+    assert response.status_code == status_code
+    assert response.json() == {"detail": detail}
+    assert "private" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("error", "error_code", "message", "chunks"),
+    [
+        (
+            TimeoutError("private timeout"),
+            "gateway_timeout",
+            "The request timed out.",
+            (),
+        ),
+        (
+            RuntimeError("private internal details"),
+            "internal_error",
+            "An internal server error occurred.",
+            ("first",),
+        ),
+    ],
+)
+def test_stream_errors_are_sse_events_without_done(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    error_code: str,
+    message: str,
+    chunks: tuple[str, ...],
+) -> None:
+    class FailingStreamGateway(FakeGateway):
+        def stream(
+            self,
+            prompt: str,
+            model: Model = Model.SMART,
+        ) -> AsyncIterator[str]:
+            async def failing_chunks() -> AsyncIterator[str]:
+                for chunk in chunks:
+                    yield chunk
+                raise error
+
+            return failing_chunks()
+
+    monkeypatch.setattr(main, "gateway", FailingStreamGateway())
+    response = TestClient(main.app).post("/stream", json={"prompt": "hello"})
+
+    assert response.status_code == 200
+    assert "event: error\n" in response.text
+    assert (
+        f'"type":"error","code":"{error_code}","message":"{message}"'
+        in response.text
+    )
+    assert "event: done\n" not in response.text
+    assert "private" not in response.text
+    if chunks:
+        assert (
+            'event: chunk\ndata: {"type":"chunk","index":1,'
+            '"content":"first"}'
+        ) in response.text
