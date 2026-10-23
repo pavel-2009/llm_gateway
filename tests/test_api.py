@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
+from prometheus_client.parser import text_string_to_metric_families
 import pytest
 
 import llm_gateway.app as main
@@ -109,6 +110,40 @@ def test_stream_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
         'event: done\ndata: {"type":"done","chunks":2,"output_chars":6}',
     ]
     assert fake_gateway.model == Model.SMART
+
+
+def test_metrics_endpoint_exposes_http_metrics_without_counting_scrapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "gateway", FakeGateway())
+    client = TestClient(main.app)
+
+    initial_response = client.get("/metrics")
+    initial_count = _generate_request_count(initial_response.text)
+    api_response = client.post("/generate", json={"prompt": "hello"})
+    metrics_response = client.get("/metrics")
+
+    assert api_response.status_code == 200
+    assert metrics_response.status_code == 200
+    assert metrics_response.headers["content-type"].startswith("text/plain")
+    assert _generate_request_count(metrics_response.text) == initial_count + 1
+    assert 'route="/metrics"' not in metrics_response.text
+
+
+def _generate_request_count(metrics: str) -> float:
+    for family in text_string_to_metric_families(metrics):
+        for sample in family.samples:
+            if (
+                sample.name == "llm_gateway_http_requests_total"
+                and sample.labels
+                == {
+                    "method": "POST",
+                    "route": "/generate",
+                    "status_code": "200",
+                }
+            ):
+                return sample.value
+    return 0.0
 
 
 def test_stream_openapi_response_contract() -> None:

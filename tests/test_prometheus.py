@@ -9,9 +9,9 @@ def test_request_metrics_are_recorded() -> None:
     client = PrometheusClient(registry=CollectorRegistry())
 
     client.request_started("POST", "/generate")
-    client.request_finished(
+    client.request_completed(
         method="POST",
-        route="/generate",
+        path="/generate",
         status_code=200,
         duration_seconds=0.25,
     )
