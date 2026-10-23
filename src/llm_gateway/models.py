@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Model(str, Enum):
@@ -17,6 +17,13 @@ class Request(BaseModel):
 
     prompt: str = Field(..., min_length=1, max_length=10000)
     model: Model = Field(Model.SMART)
+
+    @field_validator("prompt")
+    @classmethod
+    def prompt_must_not_be_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("prompt must not be empty")
+        return value
 
 
 class GenerateResponse(BaseModel):
@@ -56,3 +63,17 @@ class StreamComplete(BaseModel):
         ge=0,
         description="Общее количество переданных символов.",
     )
+
+
+class StreamError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["error"] = "error"
+    code: Literal[
+        "gateway_timeout",
+        "provider_unavailable",
+        "invalid_request",
+        "upstream_error",
+        "internal_error",
+    ]
+    message: str

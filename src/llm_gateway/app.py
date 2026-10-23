@@ -6,10 +6,18 @@ import logging
 import time
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request as HTTPRequest
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from llm_gateway.adapter.errors import (
+    AllModelsUnavailableError,
+    InvalidRequestError,
+    LLMProviderError,
+    ProviderTimeoutError,
+)
 from llm_gateway.core.logging_context import request_id_context
 from llm_gateway.llm_gateway import LLMGateway
 from llm_gateway.models import (
@@ -18,6 +26,7 @@ from llm_gateway.models import (
     Request,
     StreamComplete,
     StreamChunk,
+    StreamError,
 )
 
 
@@ -92,21 +101,78 @@ app.add_middleware(RequestLoggingMiddleware)
 gateway = LLMGateway()
 
 
+def _error_details(error: Exception) -> tuple[int, str, str]:
+    if isinstance(error, (asyncio.TimeoutError, ProviderTimeoutError)):
+        return 504, "gateway_timeout", "The request timed out."
+    if isinstance(error, AllModelsUnavailableError):
+        if error.failures and all(
+            isinstance(failure, LLMProviderError)
+            and failure.category == "invalid_response"
+            for failure in error.failures.values()
+        ):
+            return (
+                502,
+                "upstream_error",
+                "The configured model providers returned invalid responses.",
+            )
+        return (
+            503,
+            "provider_unavailable",
+            "All configured model providers are unavailable.",
+        )
+    if isinstance(error, InvalidRequestError):
+        return 400, "invalid_request", "The model provider rejected the request."
+    if isinstance(error, LLMProviderError):
+        return (
+            502,
+            "upstream_error",
+            "A model provider failed to process the request.",
+        )
+    return 500, "internal_error", "An internal server error occurred."
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_error(
+    request: HTTPRequest,
+    error: Exception,
+) -> JSONResponse:
+    status_code, _, message = _error_details(error)
+    logger.error(
+        "API request failed request_id=%s path=%s error_type=%s",
+        request_id_context.get(),
+        request.url.path,
+        type(error).__name__,
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": message},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_invalid_request(
+    request: HTTPRequest,
+    _error: RequestValidationError,
+) -> JSONResponse:
+    logger.info(
+        "API request validation failed request_id=%s path=%s error_count=%s",
+        request_id_context.get(),
+        request.url.path,
+        len(_error.errors()),
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "Invalid request."},
+    )
+
+
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(request: Request) -> GenerateResponse:
     logger.info(
         "API operation accepted request_id=%s operation=generate",
         request_id_context.get(),
     )
-    try:
-        return await gateway.generate(request.prompt, request.model)
-
-    except asyncio.TimeoutError:
-        logger.error(
-            "API operation timed out request_id=%s operation=generate",
-            request_id_context.get(),
-        )
-        raise
+    return await gateway.generate(request.prompt, request.model)
 
 
 @app.post("/extract", response_model=ExtractedReview)
@@ -115,14 +181,7 @@ async def extract(request: Request) -> ExtractedReview:
         "API operation accepted request_id=%s operation=extract",
         request_id_context.get(),
     )
-    try:
-        return await gateway.extract(request.prompt, request.model)
-    except asyncio.TimeoutError:
-        logger.error(
-            "API operation timed out request_id=%s operation=extract",
-            request_id_context.get(),
-        )
-        raise
+    return await gateway.extract(request.prompt, request.model)
 
 
 @app.post(
@@ -132,8 +191,9 @@ async def extract(request: Request) -> ExtractedReview:
     responses={
         200: {
             "description": (
-                "Server-Sent Events: `chunk` для каждого фрагмента и `done` "
-                "с итоговым количеством чанков и символов."
+                "Server-Sent Events: `chunk` для каждого фрагмента; `done` "
+                "с итоговым количеством чанков и символов при успехе; `error` "
+                "при ошибке."
             ),
             "content": {
                 "text/event-stream": {
@@ -143,6 +203,9 @@ async def extract(request: Request) -> ExtractedReview:
                         '"content":"Hello"}\n\n'
                         'event: done\ndata: {"type":"done","chunks":1,'
                         '"output_chars":5}\n\n'
+                        'event: error\ndata: {"type":"error",'
+                        '"code":"gateway_timeout",'
+                        '"message":"The request timed out."}\n\n'
                     ),
                 },
             },
@@ -162,17 +225,34 @@ async def stream(request: Request) -> StreamingResponse:
             async for chunk in gateway.stream(request.prompt, request.model):
                 chunk_count += 1
                 output_chars += len(chunk)
+                event = StreamChunk(
+                    index=chunk_count,
+                    content=chunk,
+                ).model_dump_json()
                 yield (
                     "event: chunk\n"
-                    f"data: {StreamChunk(index=chunk_count, content=chunk).model_dump_json()}"
+                    f"data: {event}"
                     "\n\n"
                 )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exception:
             logger.error(
                 "API operation timed out request_id=%s operation=stream",
                 request_id_context.get(),
             )
-            raise
+            _, code, message = _error_details(exception)
+            error = StreamError(code=code, message=message)
+            yield f"event: error\ndata: {error.model_dump_json()}\n\n"
+            return
+        except Exception as exception:
+            logger.error(
+                "API stream failed request_id=%s error_type=%s",
+                request_id_context.get(),
+                type(exception).__name__,
+            )
+            _, code, message = _error_details(exception)
+            error = StreamError(code=code, message=message)
+            yield f"event: error\ndata: {error.model_dump_json()}\n\n"
+            return
         completed = StreamComplete(
             chunks=chunk_count,
             output_chars=output_chars,
