@@ -67,53 +67,66 @@ class ModelResolver:
         if context.operation == OperationType.STREAM:
             return self._resolve_stream(context, request_id, deadline)
 
-        async with asyncio.timeout_at(deadline):
-            failures: dict[str, Exception] = {}
-            for provider_name, model_name in models:
-                key = f"{provider_name}:{model_name}"
-                try:
-                    result = await self._execute(
-                        context,
-                        request_id,
-                        deadline,
-                        provider_name,
-                        model_name,
-                    )
-                    logger.info(
-                        "Resolver selected request_id=%s provider=%s model=%s",
-                        request_id,
-                        provider_name,
-                        model_name,
-                    )
-                    return result
-                except LLMProviderError as error:
-                    if not self._can_fallback(error):
-                        logger.error(
-                            "Resolver stopped request_id=%s provider=%s "
-                            "model=%s error_type=%s fallback=false",
+        try:
+            async with asyncio.timeout_at(deadline):
+                failures: dict[str, Exception] = {}
+                for provider_name, model_name in models:
+                    key = f"{provider_name}:{model_name}"
+                    try:
+                        result = await self._execute(
+                            context,
+                            request_id,
+                            deadline,
+                            provider_name,
+                            model_name,
+                        )
+                        logger.info(
+                            "Resolver selected request_id=%s provider=%s model=%s",
+                            request_id,
+                            provider_name,
+                            model_name,
+                        )
+                        return result
+                    except LLMProviderError as error:
+                        if not self._can_fallback(error):
+                            logger.error(
+                                "Resolver stopped request_id=%s provider=%s "
+                                "model=%s error_type=%s fallback=false",
+                                request_id,
+                                provider_name,
+                                model_name,
+                                type(error).__name__,
+                            )
+                            raise
+                        logger.warning(
+                            "Resolver provider failed request_id=%s provider=%s "
+                            "model=%s error_type=%s fallback=true",
                             request_id,
                             provider_name,
                             model_name,
                             type(error).__name__,
                         )
-                        raise
-                    logger.warning(
-                        "Resolver provider failed request_id=%s provider=%s "
-                        "model=%s error_type=%s fallback=true",
-                        request_id,
-                        provider_name,
-                        model_name,
-                        type(error).__name__,
-                    )
-                    failures[key] = error
+                        failures[key] = error
 
+                logger.error(
+                    "Resolver exhausted candidates request_id=%s "
+                    "failed_candidate_count=%s",
+                    request_id,
+                    len(failures),
+                )
+                raise AllModelsUnavailableError(failures)
+
+        except asyncio.TimeoutError:
             logger.error(
-                "Resolver exhausted candidates request_id=%s "
-                "failed_candidate_count=%s",
+                "Resolver timed out request_id=%s operation=%s tier=%s "
+                "candidate_count=%s timeout_seconds=%.1f",
                 request_id,
-                len(failures),
+                context.operation.value,
+                context.model.value,
+                len(models),
+                timeout,
             )
-            raise AllModelsUnavailableError(failures)
+            raise
 
     async def _execute(
         self,
