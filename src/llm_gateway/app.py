@@ -1,5 +1,6 @@
 """FastAPI application and HTTP endpoints."""
 
+import asyncio
 from collections.abc import AsyncIterator
 import logging
 import time
@@ -97,7 +98,15 @@ async def generate(request: Request) -> GenerateResponse:
         "API operation accepted request_id=%s operation=generate",
         request_id_context.get(),
     )
-    return await gateway.generate(request.prompt, request.model)
+    try:
+        return await gateway.generate(request.prompt, request.model)
+
+    except asyncio.TimeoutError:
+        logger.error(
+            "API operation timed out request_id=%s operation=generate",
+            request_id_context.get(),
+        )
+        raise
 
 
 @app.post("/extract", response_model=ExtractedReview)
@@ -106,7 +115,14 @@ async def extract(request: Request) -> ExtractedReview:
         "API operation accepted request_id=%s operation=extract",
         request_id_context.get(),
     )
-    return await gateway.extract(request.prompt, request.model)
+    try:
+        return await gateway.extract(request.prompt, request.model)
+    except asyncio.TimeoutError:
+        logger.error(
+            "API operation timed out request_id=%s operation=extract",
+            request_id_context.get(),
+        )
+        raise
 
 
 @app.post(
@@ -142,14 +158,21 @@ async def stream(request: Request) -> StreamingResponse:
     async def chunks() -> AsyncIterator[str]:
         chunk_count = 0
         output_chars = 0
-        async for chunk in gateway.stream(request.prompt, request.model):
-            chunk_count += 1
-            output_chars += len(chunk)
-            yield (
-                "event: chunk\n"
-                f"data: {StreamChunk(index=chunk_count, content=chunk).model_dump_json()}"
-                "\n\n"
+        try:
+            async for chunk in gateway.stream(request.prompt, request.model):
+                chunk_count += 1
+                output_chars += len(chunk)
+                yield (
+                    "event: chunk\n"
+                    f"data: {StreamChunk(index=chunk_count, content=chunk).model_dump_json()}"
+                    "\n\n"
+                )
+        except asyncio.TimeoutError:
+            logger.error(
+                "API operation timed out request_id=%s operation=stream",
+                request_id_context.get(),
             )
+            raise
         completed = StreamComplete(
             chunks=chunk_count,
             output_chars=output_chars,
