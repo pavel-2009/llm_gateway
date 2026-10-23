@@ -150,6 +150,7 @@ class ModelResolver:
         provider = self.model_registry.create_provider(provider_name, model_name)
         pipeline = BasePolicyPipeline(
             provider=provider,
+            provider_name=provider_name,
         )
         pipeline_context = RequestContext(
             request_id=request_id,
