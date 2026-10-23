@@ -29,6 +29,8 @@ from llm_gateway.models import (
     StreamError,
 )
 
+from llm_gateway.prometheus import prometheus
+
 
 logging.basicConfig(
     level=logging.INFO,
