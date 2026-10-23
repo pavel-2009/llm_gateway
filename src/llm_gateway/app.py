@@ -66,6 +66,8 @@ class RequestLoggingMiddleware:
             path,
         )
 
+        prometheus.request_started(method, path)
+
         async def log_response_start(message: Message) -> None:
             nonlocal status_code
             if message["type"] == "http.response.start":
@@ -95,6 +97,7 @@ class RequestLoggingMiddleware:
                 status_code,
                 duration * 1000,
             )
+            prometheus.request_completed(method, path, status_code, duration)
             request_id_context.reset(token)
 
 
