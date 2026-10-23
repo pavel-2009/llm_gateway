@@ -5,14 +5,17 @@ import time
 from collections.abc import AsyncIterator
 
 import pytest
+from prometheus_client import CollectorRegistry
 
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.adapter.errors import ProviderTimeoutError
 from llm_gateway.core.config import config
+from llm_gateway.policy import base_pipeline
 from llm_gateway.policy.base_pipeline import BasePolicyPipeline
 from llm_gateway.policy.error_policy import ErrorPolicy
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
+from llm_gateway.prometheus import PrometheusClient
 
 
 def test_error_policy_handles_gateway_and_unclassified_errors() -> None:
@@ -109,6 +112,8 @@ async def test_pipeline_retries_retryable_generation_error(
     monkeypatch.setattr(config, "RETRY_BASE_DELAY", 0)
     monkeypatch.setattr(config, "RETRY_MAX_DELAY", 0)
     monkeypatch.setattr(config, "RETRY_JITTER", 0)
+    metrics_client = PrometheusClient(registry=CollectorRegistry())
+    monkeypatch.setattr(base_pipeline, "prometheus", metrics_client)
 
     class FakeProvider:
         def __init__(self) -> None:
@@ -131,6 +136,19 @@ async def test_pipeline_retries_retryable_generation_error(
     assert result.text == "ok"
     assert provider.attempts == 2
     assert provider.last_prompt == "test prompt"
+    metrics = metrics_client.render().decode()
+    assert (
+        'llm_gateway_provider_requests_total{model="unknown",'
+        'operation="generate",outcome="error",provider="unknown"} 1.0'
+    ) in metrics
+    assert (
+        'llm_gateway_provider_requests_total{model="unknown",'
+        'operation="generate",outcome="success",provider="unknown"} 1.0'
+    ) in metrics
+    assert (
+        'llm_gateway_provider_retries_total{model="unknown",'
+        'operation="generate",provider="unknown"} 1.0'
+    ) in metrics
 
 
 @pytest.mark.asyncio
@@ -170,6 +188,8 @@ async def test_pipeline_retries_stream_error_before_first_chunk(
     monkeypatch.setattr(config, "RETRY_BASE_DELAY", 0)
     monkeypatch.setattr(config, "RETRY_MAX_DELAY", 0)
     monkeypatch.setattr(config, "RETRY_JITTER", 0)
+    metrics_client = PrometheusClient(registry=CollectorRegistry())
+    monkeypatch.setattr(base_pipeline, "prometheus", metrics_client)
 
     class FakeProvider:
         def __init__(self) -> None:
@@ -198,6 +218,19 @@ async def test_pipeline_retries_stream_error_before_first_chunk(
     assert context.first_chunk_emitted
     assert provider.attempts == 2
     assert provider.last_prompt == "test prompt"
+    metrics = metrics_client.render().decode()
+    assert (
+        'llm_gateway_provider_requests_total{model="unknown",'
+        'operation="stream",outcome="error",provider="unknown"} 1.0'
+    ) in metrics
+    assert (
+        'llm_gateway_provider_requests_total{model="unknown",'
+        'operation="stream",outcome="success",provider="unknown"} 1.0'
+    ) in metrics
+    assert (
+        'llm_gateway_provider_retries_total{model="unknown",'
+        'operation="stream",provider="unknown"} 1.0'
+    ) in metrics
 
 
 @pytest.mark.asyncio

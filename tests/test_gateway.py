@@ -3,12 +3,14 @@
 from collections.abc import AsyncIterable
 
 import pytest
+from prometheus_client import CollectorRegistry
 
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.llm_gateway import LLMGateway
 from llm_gateway.models import Model
 from llm_gateway.policy.request_context import OperationType
+from llm_gateway.prometheus import PrometheusClient
 from llm_gateway.resolver.model_resolver import RESOLVER_RESULT
 from llm_gateway.resolver.resolver_context import ResolveContext
 
@@ -36,6 +38,38 @@ async def test_generate_returns_generation_response() -> None:
     assert resolver.context is not None
     assert resolver.context.operation == OperationType.GENERATE
     assert resolver.context.params.deadline == config.REQUEST_TIMEOUT
+
+
+@pytest.mark.asyncio
+async def test_gateway_records_llm_operation_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import llm_gateway.llm_gateway as gateway_module
+
+    metrics_client = PrometheusClient(registry=CollectorRegistry())
+    monkeypatch.setattr(gateway_module, "prometheus", metrics_client)
+    gateway = LLMGateway()
+    gateway.resolver = FakeResolver(
+        GenerateResponse(text="answer", provider="openai", model="test")
+    )
+
+    prompt = "private-review-text"
+    await gateway.generate(prompt)
+
+    metrics = metrics_client.render().decode()
+    assert (
+        'llm_gateway_llm_requests_total{model_tier="smart",operation="generate",'
+        'outcome="success"} 1.0'
+    ) in metrics
+    assert (
+        'llm_gateway_llm_input_characters_total{model_tier="smart",'
+        'operation="generate"} 19.0'
+    ) in metrics
+    assert (
+        'llm_gateway_llm_output_characters_total{model_tier="smart",'
+        'operation="generate"} 6.0'
+    ) in metrics
+    assert prompt not in metrics
 
 
 @pytest.mark.asyncio
@@ -90,6 +124,34 @@ async def test_stream_returns_directly_iterable_chunks(
     assert resolver.context is not None
     assert resolver.context.operation == OperationType.STREAM
     assert resolver.context.params.deadline == 90.0
+
+
+@pytest.mark.asyncio
+async def test_gateway_records_stream_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import llm_gateway.llm_gateway as gateway_module
+
+    metrics_client = PrometheusClient(registry=CollectorRegistry())
+    monkeypatch.setattr(gateway_module, "prometheus", metrics_client)
+
+    async def chunks() -> AsyncIterable[str]:
+        yield "one"
+        yield "two"
+
+    gateway = LLMGateway()
+    gateway.resolver = FakeResolver(chunks())
+
+    assert [chunk async for chunk in gateway.stream("prompt")] == ["one", "two"]
+
+    metrics = metrics_client.render().decode()
+    assert (
+        'llm_gateway_llm_requests_total{model_tier="smart",operation="stream",'
+        'outcome="success"} 1.0'
+    ) in metrics
+    assert (
+        'llm_gateway_llm_stream_chunks_total{model_tier="smart"} 2.0'
+    ) in metrics
 
 
 @pytest.mark.asyncio
