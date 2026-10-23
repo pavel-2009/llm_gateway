@@ -11,6 +11,7 @@ from llm_gateway.adapter.errors import (
     AIExtractionError,
     AllModelsUnavailableError,
     InvalidRequestError,
+    ProviderTimeoutError,
 )
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview
@@ -130,7 +131,7 @@ def test_metrics_endpoint_exposes_http_metrics_without_counting_scrapes(
     assert 'route="/metrics"' not in metrics_response.text
 
 
-def _generate_request_count(metrics: str) -> float:
+def _generate_request_count(metrics: str, status_code: int = 200) -> float:
     for family in text_string_to_metric_families(metrics):
         for sample in family.samples:
             if (
@@ -139,7 +140,7 @@ def _generate_request_count(metrics: str) -> float:
                 == {
                     "method": "POST",
                     "route": "/generate",
-                    "status_code": "200",
+                    "status_code": str(status_code),
                 }
             ):
                 return sample.value
@@ -241,6 +242,19 @@ def test_invalid_request_contract_returns_sanitized_422(
             "All configured model providers are unavailable.",
         ),
         (
+            AllModelsUnavailableError(
+                {
+                    "ollama": ProviderTimeoutError(
+                        "private timeout",
+                        provider="ollama",
+                        retryable=True,
+                    )
+                }
+            ),
+            504,
+            "The request timed out.",
+        ),
+        (
             invalid_structured_response(),
             502,
             "The configured model providers returned invalid responses.",
@@ -272,14 +286,21 @@ def test_gateway_errors_return_safe_http_responses(
             raise error
 
     monkeypatch.setattr(main, "gateway", FailingGateway())
-    response = TestClient(main.app, raise_server_exceptions=False).post(
+    client = TestClient(main.app, raise_server_exceptions=False)
+    metrics_before = client.get("/metrics").text
+    response = client.post(
         "/generate",
         json={"prompt": "hello"},
     )
+    metrics_after = client.get("/metrics").text
 
     assert response.status_code == status_code
     assert response.json() == {"detail": detail}
     assert "private" not in response.text
+    assert (
+        _generate_request_count(metrics_after, status_code)
+        == _generate_request_count(metrics_before, status_code) + 1
+    )
 
 
 @pytest.mark.parametrize(
