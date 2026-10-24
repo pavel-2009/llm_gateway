@@ -20,6 +20,7 @@ from llm_gateway.core.config import (
     config,
 )
 from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.telemetry import http_client_span
 
 
 logger = logging.getLogger(__name__)
@@ -49,11 +50,17 @@ class ClaudeProvider(LLMProvider):
             self.model,
         )
         try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=config.CLAUDE_MAX_TOKENS,
-                **build_prompt(prompt, None, False, Providers.CLAUDE),
-            )
+            with http_client_span(
+                Providers.CLAUDE,
+                "generate",
+                self.model,
+                "https://api.anthropic.com/v1/messages",
+            ):
+                response = await self.client.messages.create(
+                    model=self.model,
+                    max_tokens=config.CLAUDE_MAX_TOKENS,
+                    **build_prompt(prompt, None, False, Providers.CLAUDE),
+                )
 
             text = "".join(
                 block.text
@@ -95,15 +102,21 @@ class ClaudeProvider(LLMProvider):
             self.model,
         )
         try:
-            async with self.client.messages.stream(
-                model=self.model,
-                max_tokens=config.CLAUDE_MAX_TOKENS,
-                **build_prompt(prompt, None, True, Providers.CLAUDE),
-            ) as stream:
-                async for text in stream.text_stream:
-                    chunks += 1
-                    output_chars += len(text)
-                    yield text
+            with http_client_span(
+                Providers.CLAUDE,
+                "stream",
+                self.model,
+                "https://api.anthropic.com/v1/messages",
+            ):
+                async with self.client.messages.stream(
+                    model=self.model,
+                    max_tokens=config.CLAUDE_MAX_TOKENS,
+                    **build_prompt(prompt, None, True, Providers.CLAUDE),
+                ) as stream:
+                    async for text in stream.text_stream:
+                        chunks += 1
+                        output_chars += len(text)
+                        yield text
             logger.info(
                 "Provider request completed request_id=%s provider=%s "
                 "operation=streaming chunks=%s output_chars=%s",
@@ -134,11 +147,17 @@ class ClaudeProvider(LLMProvider):
             self.model,
         )
         try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=config.CLAUDE_MAX_TOKENS,
-                **build_prompt(prompt, EXTRACT_SCHEMA, False, Providers.CLAUDE),
-            )
+            with http_client_span(
+                Providers.CLAUDE,
+                "extract",
+                self.model,
+                "https://api.anthropic.com/v1/messages",
+            ):
+                response = await self.client.messages.create(
+                    model=self.model,
+                    max_tokens=config.CLAUDE_MAX_TOKENS,
+                    **build_prompt(prompt, EXTRACT_SCHEMA, False, Providers.CLAUDE),
+                )
 
             text = "".join(
                 block.text

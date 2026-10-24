@@ -21,6 +21,7 @@ from llm_gateway.core.config import (
     config,
 )
 from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.telemetry import http_client_span
 
 
 logger = logging.getLogger(__name__)
@@ -57,14 +58,24 @@ class OllamaProvider(LLMProvider):
         )
         try:
             async with httpx.AsyncClient(timeout=ollama_timeout) as client:
-                response = await client.post(
+                with http_client_span(
+                    Providers.OLLAMA,
+                    "generate",
+                    self.model,
                     f"{self.base_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        **build_prompt(prompt, None, False, Providers.OLLAMA),
-                    },
-                )
-                response.raise_for_status()
+                ) as span:
+                    response = await client.post(
+                        f"{self.base_url}/api/chat",
+                        json={
+                            "model": self.model,
+                            **build_prompt(prompt, None, False, Providers.OLLAMA),
+                        },
+                    )
+                    response.raise_for_status()
+                    span.set_attribute(
+                        "http.response.status_code",
+                        response.status_code,
+                    )
                 payload = response.json()
 
             result = GenerateResponse(
@@ -104,28 +115,34 @@ class OllamaProvider(LLMProvider):
         )
         try:
             async with httpx.AsyncClient(timeout=ollama_timeout) as client:
-                async with client.stream(
-                    "POST",
+                with http_client_span(
+                    Providers.OLLAMA,
+                    "stream",
+                    self.model,
                     f"{self.base_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        **build_prompt(prompt, None, True, Providers.OLLAMA),
-                    },
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
+                ):
+                    async with client.stream(
+                        "POST",
+                        f"{self.base_url}/api/chat",
+                        json={
+                            "model": self.model,
+                            **build_prompt(prompt, None, True, Providers.OLLAMA),
+                        },
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
 
-                        payload = json.loads(line)
-                        if payload.get("error"):
-                            raise RuntimeError(payload["error"])
+                            payload = json.loads(line)
+                            if payload.get("error"):
+                                raise RuntimeError(payload["error"])
 
-                        text = payload.get("message", {}).get("content", "")
-                        if text:
-                            chunks += 1
-                            output_chars += len(text)
-                            yield text
+                            text = payload.get("message", {}).get("content", "")
+                            if text:
+                                chunks += 1
+                                output_chars += len(text)
+                                yield text
             logger.info(
                 "Provider request completed request_id=%s provider=%s "
                 "operation=streaming chunks=%s output_chars=%s",
@@ -157,16 +174,26 @@ class OllamaProvider(LLMProvider):
         )
         try:
             async with httpx.AsyncClient(timeout=ollama_timeout) as client:
-                response = await client.post(
+                with http_client_span(
+                    Providers.OLLAMA,
+                    "extract",
+                    self.model,
                     f"{self.base_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        **build_prompt(
-                            prompt, EXTRACT_SCHEMA, False, Providers.OLLAMA
-                        ),
-                    },
-                )
-                response.raise_for_status()
+                ) as span:
+                    response = await client.post(
+                        f"{self.base_url}/api/chat",
+                        json={
+                            "model": self.model,
+                            **build_prompt(
+                                prompt, EXTRACT_SCHEMA, False, Providers.OLLAMA
+                            ),
+                        },
+                    )
+                    response.raise_for_status()
+                    span.set_attribute(
+                        "http.response.status_code",
+                        response.status_code,
+                    )
                 payload = response.json()
 
             result = ExtractedReview.model_validate_json(

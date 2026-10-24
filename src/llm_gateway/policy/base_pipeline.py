@@ -40,14 +40,6 @@ class BasePolicyPipeline:
         context: RequestContext,
     ) -> PipelineResult:
         """Execute the operation with error and retry policies."""
-        if context.is_expired:
-            logger.warning(
-                "Pipeline deadline expired request_id=%s operation=%s",
-                context.request_id,
-                context.operation.value,
-            )
-            raise TimeoutError("Request deadline exceeded")
-
         logger.info(
             "Pipeline started request_id=%s operation=%s adapter=%s model=%s",
             context.request_id,
@@ -58,21 +50,66 @@ class BasePolicyPipeline:
         if context.operation == OperationType.STREAM:
             return self._execute_stream(context)
 
-        while True:
+        with tracer.start_as_current_span(
+            "llm.policy_pipeline",
+            attributes={
+                "llm.operation": context.operation.value,
+                "llm.provider.name": self.provider_name,
+                "llm.request.model": self.model,
+            },
+        ) as span:
+            succeeded = False
             try:
-                result = await self._execute_operation(context)
-                logger.info(
-                    "Pipeline operation completed request_id=%s operation=%s "
-                    "retries=%s",
-                    context.request_id,
-                    context.operation.value,
-                    context.retries_made,
+                if context.is_expired:
+                    logger.warning(
+                        "Pipeline deadline expired request_id=%s operation=%s",
+                        context.request_id,
+                        context.operation.value,
+                    )
+                    raise TimeoutError("Request deadline exceeded")
+                while True:
+                    try:
+                        result = await self._execute_operation(context)
+                        logger.info(
+                            "Pipeline operation completed request_id=%s "
+                            "operation=%s retries=%s",
+                            context.request_id,
+                            context.operation.value,
+                            context.retries_made,
+                        )
+                        succeeded = True
+                        return result
+                    except Exception as error:
+                        await self._handle_error(error, context)
+            finally:
+                span.set_attribute("llm.retry.count", context.retries_made)
+                span.set_attribute(
+                    "llm.outcome",
+                    "success" if succeeded else "error",
                 )
-                return result
-            except Exception as error:
-                await self._handle_error(error, context)
 
     async def _execute_stream(self, context: RequestContext) -> AsyncIterable[str]:
+        with tracer.start_as_current_span(
+            "llm.policy_pipeline",
+            attributes={
+                "llm.operation": context.operation.value,
+                "llm.provider.name": self.provider_name,
+                "llm.request.model": self.model,
+            },
+        ) as span:
+            succeeded = False
+            try:
+                async for chunk in self._iterate_stream(context):
+                    yield chunk
+                succeeded = True
+            finally:
+                span.set_attribute("llm.retry.count", context.retries_made)
+                span.set_attribute(
+                    "llm.outcome",
+                    "success" if succeeded else "error",
+                )
+
+    async def _iterate_stream(self, context: RequestContext) -> AsyncIterable[str]:
         """Retry stream setup/failures until the first chunk is emitted."""
         while True:
             if context.is_expired:
@@ -114,11 +151,22 @@ class BasePolicyPipeline:
         error: Exception,
         context: RequestContext,
     ) -> None:
-        should_retry = self.retry_policy.should_retry(
-            error,
-            context.retries_made,
-            error_policy=self.error_policy,
-        )
+        with tracer.start_as_current_span(
+            "llm.policy.retry_check",
+            attributes={
+                "llm.operation": context.operation.value,
+                "llm.provider.name": self.provider_name,
+                "llm.request.model": self.model,
+                "llm.retry.attempt": context.retries_made,
+                "error.type": type(error).__name__,
+            },
+        ) as span:
+            should_retry = self.retry_policy.should_retry(
+                error,
+                context.retries_made,
+                error_policy=self.error_policy,
+            )
+            span.set_attribute("llm.retry.allowed", should_retry)
 
         if not should_retry:
             logger.error(
@@ -169,7 +217,17 @@ class BasePolicyPipeline:
                 "llm.retry.delay_seconds": delay,
             },
         )
-        await asyncio.sleep(delay)
+        with tracer.start_as_current_span(
+            "llm.policy.retry_wait",
+            attributes={
+                "llm.operation": context.operation.value,
+                "llm.provider.name": self.provider_name,
+                "llm.request.model": self.model,
+                "llm.retry.attempt": context.retries_made,
+                "llm.retry.delay_seconds": delay,
+            },
+        ):
+            await asyncio.sleep(delay)
 
     async def _execute_operation(
         self,

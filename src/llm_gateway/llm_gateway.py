@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterable, AsyncIterator
 import logging
+import time
 
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.core.config import ExtractedReview, config
@@ -163,6 +164,7 @@ class LLMGateway:
                 request_id = request_id_context.get()
                 chunks = 0
                 output_chars = 0
+                operation_started_at = time.monotonic()
                 logger.info(
                     "Gateway operation started request_id=%s operation=%s",
                     request_id,
@@ -175,6 +177,11 @@ class LLMGateway:
                     if not isinstance(result, AsyncIterable):
                         raise TypeError("resolver returned an invalid stream result")
                     async for chunk in result:
+                        if chunks == 0:
+                            span.set_attribute(
+                                "llm.stream.time_to_first_token_ms",
+                                (time.monotonic() - operation_started_at) * 1000,
+                            )
                         chunks += 1
                         output_chars += len(chunk)
                         yield chunk

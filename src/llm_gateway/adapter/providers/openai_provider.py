@@ -21,6 +21,7 @@ from llm_gateway.core.config import (
     config,
 )
 from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.telemetry import http_client_span
 
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,16 @@ class OpenAIProvider(LLMProvider):
             self.model,
         )
         try:
-            response = await self.client.responses.create(
-                model=self.model,
-                **build_prompt(prompt, None, False, Providers.OPENAI),
-            )
+            with http_client_span(
+                Providers.OPENAI,
+                "generate",
+                self.model,
+                "https://api.openai.com/v1/responses",
+            ):
+                response = await self.client.responses.create(
+                    model=self.model,
+                    **build_prompt(prompt, None, False, Providers.OPENAI),
+                )
     
             result = GenerateResponse(
                 text=response.output_text,
@@ -93,23 +100,31 @@ class OpenAIProvider(LLMProvider):
             self.model,
         )
         try:
-            stream = await self.client.responses.create(
-                model=self.model,
-                **build_prompt(prompt, None, True, Providers.OPENAI),
-            )
+            with http_client_span(
+                Providers.OPENAI,
+                "stream",
+                self.model,
+                "https://api.openai.com/v1/responses",
+            ):
+                stream = await self.client.responses.create(
+                    model=self.model,
+                    **build_prompt(prompt, None, True, Providers.OPENAI),
+                )
 
-            async for chunk in stream:
-                if chunk.type == "response.output_text.delta":
-                    chunks += 1
-                    output_chars += len(chunk.delta)
-                    yield chunk.delta
+                async for chunk in stream:
+                    if chunk.type == "response.output_text.delta":
+                        chunks += 1
+                        output_chars += len(chunk.delta)
+                        yield chunk.delta
 
-                elif chunk.type == "response.failed":
-                    error = chunk.response.error
-                    raise ProviderReportedError(
-                        error.message if error else "OpenAI returned a failed response",
-                        code=error.code if error else None,
-                    )
+                    elif chunk.type == "response.failed":
+                        error = chunk.response.error
+                        raise ProviderReportedError(
+                            error.message
+                            if error
+                            else "OpenAI returned a failed response",
+                            code=error.code if error else None,
+                        )
             logger.info(
                 "Provider request completed request_id=%s provider=%s "
                 "operation=streaming chunks=%s output_chars=%s",
@@ -140,10 +155,16 @@ class OpenAIProvider(LLMProvider):
             self.model,
         )
         try:
-            response = await self.client.responses.create(
-                model=self.model,
-                **build_prompt(prompt, EXTRACT_SCHEMA, False, Providers.OPENAI),
-            )
+            with http_client_span(
+                Providers.OPENAI,
+                "extract",
+                self.model,
+                "https://api.openai.com/v1/responses",
+            ):
+                response = await self.client.responses.create(
+                    model=self.model,
+                    **build_prompt(prompt, EXTRACT_SCHEMA, False, Providers.OPENAI),
+                )
 
             result = ExtractedReview.model_validate_json(
                 response.output_text

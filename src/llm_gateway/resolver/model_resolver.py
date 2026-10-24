@@ -21,6 +21,7 @@ from llm_gateway.resolver.model_registry import ModelRegistry
 from llm_gateway.resolver.resolver_context import ResolveContext
 from llm_gateway.core.config import ExtractedReview, config
 from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.telemetry import tracer
 
 
 RESOLVER_RESULT = GenerateResponse | ExtractedReview | AsyncIterable[str]
@@ -53,72 +54,35 @@ class ModelResolver:
         ):
             raise ValueError("request timeout must be a positive finite number")
         deadline = time.monotonic() + timeout
-        models = self.model_registry.get_models(context.model)
-        logger.info(
-            "Resolver started request_id=%s operation=%s tier=%s "
-            "candidate_count=%s timeout_seconds=%.1f",
-            request_id,
-            context.operation.value,
-            context.model.value,
-            len(models),
-            timeout,
-        )
 
         if context.operation == OperationType.STREAM:
             return self._resolve_stream(context, request_id, deadline)
 
-        try:
-            async with asyncio.timeout_at(deadline):
-                failures: dict[str, Exception] = {}
-                for provider_name, model_name in models:
-                    key = f"{provider_name}:{model_name}"
-                    try:
-                        result = await self._execute(
-                            context,
-                            request_id,
-                            deadline,
-                            provider_name,
-                            model_name,
-                        )
-                        logger.info(
-                            "Resolver selected request_id=%s provider=%s model=%s",
-                            request_id,
-                            provider_name,
-                            model_name,
-                        )
-                        return result
-                    except LLMProviderError as error:
-                        if not self._can_fallback(error):
-                            logger.error(
-                                "Resolver stopped request_id=%s provider=%s "
-                                "model=%s error_type=%s fallback=false",
-                                request_id,
-                                provider_name,
-                                model_name,
-                                type(error).__name__,
-                            )
-                            raise
-                        logger.warning(
-                            "Resolver provider failed request_id=%s provider=%s "
-                            "model=%s error_type=%s fallback=true",
-                            request_id,
-                            provider_name,
-                            model_name,
-                            type(error).__name__,
-                        )
-                        failures[key] = error
+        return await self._resolve_candidates(
+            context,
+            request_id,
+            deadline,
+            timeout,
+        )
 
-                logger.error(
-                    "Resolver exhausted candidates request_id=%s "
-                    "failed_candidate_count=%s",
-                    request_id,
-                    len(failures),
-                )
-                raise AllModelsUnavailableError(failures)
-
-        except asyncio.TimeoutError:
-            logger.error(
-                "Resolver timed out request_id=%s operation=%s tier=%s "
+    async def _resolve_candidates(
+        self,
+        context: ResolveContext,
+        request_id: str,
+        deadline: float,
+        timeout: float,
+    ) -> RESOLVER_RESULT:
+        with tracer.start_as_current_span(
+            "llm.model_resolver",
+            attributes={
+                "llm.operation": context.operation.value,
+                "llm.model_tier": context.model.value,
+            },
+        ) as span:
+            models = self.model_registry.get_models(context.model)
+            span.set_attribute("llm.resolver.candidate_count", len(models))
+            logger.info(
+                "Resolver started request_id=%s operation=%s tier=%s "
                 "candidate_count=%s timeout_seconds=%.1f",
                 request_id,
                 context.operation.value,
@@ -126,7 +90,94 @@ class ModelResolver:
                 len(models),
                 timeout,
             )
-            raise
+            try:
+                async with asyncio.timeout_at(deadline):
+                    failures: dict[str, Exception] = {}
+                    for provider_name, model_name in models:
+                        key = f"{provider_name}:{model_name}"
+                        try:
+                            result = await self._execute(
+                                context,
+                                request_id,
+                                deadline,
+                                provider_name,
+                                model_name,
+                            )
+                            span.set_attribute("llm.provider.name", provider_name)
+                            span.set_attribute("llm.response.model", model_name)
+                            span.set_attribute(
+                                "llm.resolver.fallback_count",
+                                len(failures),
+                            )
+                            span.set_attribute("llm.outcome", "success")
+                            logger.info(
+                                "Resolver selected request_id=%s "
+                                "provider=%s model=%s",
+                                request_id,
+                                provider_name,
+                                model_name,
+                            )
+                            return result
+                        except LLMProviderError as error:
+                            if not self._can_fallback(error):
+                                span.add_event(
+                                    "llm.model_resolver.fallback_rejected",
+                                    attributes={
+                                        "llm.provider.name": provider_name,
+                                        "llm.request.model": model_name,
+                                        "error.type": type(error).__name__,
+                                    },
+                                )
+                                logger.error(
+                                    "Resolver stopped request_id=%s provider=%s "
+                                    "model=%s error_type=%s fallback=false",
+                                    request_id,
+                                    provider_name,
+                                    model_name,
+                                    type(error).__name__,
+                                )
+                                raise
+                            span.add_event(
+                                "llm.model_resolver.fallback",
+                                attributes={
+                                    "llm.provider.name": provider_name,
+                                    "llm.request.model": model_name,
+                                    "error.type": type(error).__name__,
+                                },
+                            )
+                            logger.warning(
+                                "Resolver provider failed request_id=%s "
+                                "provider=%s model=%s error_type=%s fallback=true",
+                                request_id,
+                                provider_name,
+                                model_name,
+                                type(error).__name__,
+                            )
+                            failures[key] = error
+
+                    span.set_attribute(
+                        "llm.resolver.fallback_count",
+                        len(failures),
+                    )
+                    logger.error(
+                        "Resolver exhausted candidates request_id=%s "
+                        "failed_candidate_count=%s",
+                        request_id,
+                        len(failures),
+                    )
+                    raise AllModelsUnavailableError(failures)
+
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Resolver timed out request_id=%s operation=%s tier=%s "
+                    "candidate_count=%s timeout_seconds=%.1f",
+                    request_id,
+                    context.operation.value,
+                    context.model.value,
+                    len(models),
+                    timeout,
+                )
+                raise
 
     async def _execute(
         self,
@@ -167,67 +218,122 @@ class ModelResolver:
         deadline: float,
     ) -> RESOLVER_RESULT:
         async def stream() -> AsyncIterable[str]:
-            async with asyncio.timeout_at(deadline):
-                failures: dict[str, Exception] = {}
-                models = self.model_registry.get_models(context.model)
-                for provider_name, model_name in models:
-                    key = f"{provider_name}:{model_name}"
-                    emitted = False
-                    try:
-                        logger.info(
-                            "Resolver stream candidate started request_id=%s "
-                            "provider=%s model=%s",
-                            request_id,
-                            provider_name,
-                            model_name,
+            with tracer.start_as_current_span(
+                "llm.model_resolver",
+                attributes={
+                    "llm.operation": context.operation.value,
+                    "llm.model_tier": context.model.value,
+                },
+            ) as span:
+                try:
+                    models = self.model_registry.get_models(context.model)
+                    span.set_attribute("llm.resolver.candidate_count", len(models))
+                    logger.info(
+                        "Resolver started request_id=%s operation=%s tier=%s "
+                        "candidate_count=%s",
+                        request_id,
+                        context.operation.value,
+                        context.model.value,
+                        len(models),
+                    )
+                    async with asyncio.timeout_at(deadline):
+                        failures: dict[str, Exception] = {}
+                        for provider_name, model_name in models:
+                            key = f"{provider_name}:{model_name}"
+                            emitted = False
+                            try:
+                                logger.info(
+                                    "Resolver stream candidate started "
+                                    "request_id=%s provider=%s model=%s",
+                                    request_id,
+                                    provider_name,
+                                    model_name,
+                                )
+                                result = await self._execute(
+                                    context,
+                                    request_id,
+                                    deadline,
+                                    provider_name,
+                                    model_name,
+                                )
+                                async for chunk in cast(AsyncIterable[str], result):
+                                    emitted = True
+                                    yield chunk
+                                span.set_attribute(
+                                    "llm.provider.name",
+                                    provider_name,
+                                )
+                                span.set_attribute(
+                                    "llm.response.model",
+                                    model_name,
+                                )
+                                span.set_attribute(
+                                    "llm.resolver.fallback_count",
+                                    len(failures),
+                                )
+                                span.set_attribute("llm.outcome", "success")
+                                logger.info(
+                                    "Resolver stream candidate completed "
+                                    "request_id=%s provider=%s model=%s",
+                                    request_id,
+                                    provider_name,
+                                    model_name,
+                                )
+                                return
+                            except LLMProviderError as error:
+                                if emitted or not self._can_fallback(error):
+                                    span.add_event(
+                                        "llm.model_resolver.fallback_rejected",
+                                        attributes={
+                                            "llm.provider.name": provider_name,
+                                            "llm.request.model": model_name,
+                                            "error.type": type(error).__name__,
+                                            "llm.stream.emitted": emitted,
+                                        },
+                                    )
+                                    logger.error(
+                                        "Resolver stream stopped request_id=%s "
+                                        "provider=%s model=%s error_type=%s "
+                                        "fallback=false emitted=%s",
+                                        request_id,
+                                        provider_name,
+                                        model_name,
+                                        type(error).__name__,
+                                        emitted,
+                                    )
+                                    raise
+                                span.add_event(
+                                    "llm.model_resolver.fallback",
+                                    attributes={
+                                        "llm.provider.name": provider_name,
+                                        "llm.request.model": model_name,
+                                        "error.type": type(error).__name__,
+                                    },
+                                )
+                                logger.warning(
+                                    "Resolver stream provider failed "
+                                    "request_id=%s provider=%s model=%s "
+                                    "error_type=%s fallback=true",
+                                    request_id,
+                                    provider_name,
+                                    model_name,
+                                    type(error).__name__,
+                                )
+                                failures[key] = error
+                        span.set_attribute(
+                            "llm.resolver.fallback_count",
+                            len(failures),
                         )
-                        result = await self._execute(
-                            context,
+                        logger.error(
+                            "Resolver stream exhausted candidates "
+                            "request_id=%s failed_candidate_count=%s",
                             request_id,
-                            deadline,
-                            provider_name,
-                            model_name,
+                            len(failures),
                         )
-                        async for chunk in cast(AsyncIterable[str], result):
-                            emitted = True
-                            yield chunk
-                        logger.info(
-                            "Resolver stream candidate completed "
-                            "request_id=%s provider=%s model=%s",
-                            request_id,
-                            provider_name,
-                            model_name,
-                        )
-                        return
-                    except LLMProviderError as error:
-                        if emitted or not self._can_fallback(error):
-                            logger.error(
-                                "Resolver stream stopped request_id=%s "
-                                "provider=%s model=%s error_type=%s "
-                                "fallback=false emitted=%s",
-                                request_id,
-                                provider_name,
-                                model_name,
-                                type(error).__name__,
-                                emitted,
-                            )
-                            raise
-                        logger.warning(
-                            "Resolver stream provider failed request_id=%s "
-                            "provider=%s model=%s error_type=%s fallback=true",
-                            request_id,
-                            provider_name,
-                            model_name,
-                            type(error).__name__,
-                        )
-                        failures[key] = error
-                logger.error(
-                    "Resolver stream exhausted candidates request_id=%s "
-                    "failed_candidate_count=%s",
-                    request_id,
-                    len(failures),
-                )
-                raise AllModelsUnavailableError(failures)
+                        raise AllModelsUnavailableError(failures)
+                except asyncio.TimeoutError:
+                    span.set_attribute("llm.outcome", "timeout")
+                    raise
 
         return stream()
 
