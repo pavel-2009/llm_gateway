@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 import logging
 import time
 from uuid import uuid4
@@ -10,6 +11,9 @@ from fastapi import FastAPI, Request as HTTPRequest
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST
+from opentelemetry import trace
+from opentelemetry.propagate import extract as extract_trace_context
+from opentelemetry.trace import Status, StatusCode
 from starlette.responses import Response, StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -30,6 +34,7 @@ from llm_gateway.models import (
     StreamChunk,
     StreamError,
 )
+from llm_gateway.telemetry import tracer
 
 
 logging.basicConfig(
@@ -60,6 +65,11 @@ class RequestLoggingMiddleware:
         started_at = time.monotonic()
         status_code = 500
         track_metrics = path != "/metrics"
+        route = (
+            path
+            if path in {"/generate", "/extract", "/stream"}
+            else "/unmatched"
+        )
         if track_metrics:
             prometheus.request_started(method, path)
         logger.info(
@@ -76,18 +86,47 @@ class RequestLoggingMiddleware:
             await send(message)
 
         try:
-            await self.app(scope, receive, log_response_start)
-        except Exception as error:
-            status_code = _error_details(error)[0]
-            logger.error(
-                "HTTP request failed request_id=%s method=%s path=%s "
-                "error_type=%s",
-                request_id,
-                method,
-                path,
-                type(error).__name__,
+            incoming_context = extract_trace_context(
+                {
+                    key.decode("latin-1"): value.decode("latin-1")
+                    for key, value in scope.get("headers", [])
+                }
             )
-            raise
+            span_context = (
+                tracer.start_as_current_span(
+                    f"HTTP {method} {route}",
+                    context=incoming_context,
+                    record_exception=False,
+                    set_status_on_exception=False,
+                    attributes={
+                        "http.request.method": method,
+                        "http.route": route,
+                        "request.id": request_id,
+                    },
+                )
+                if track_metrics
+                else nullcontext(trace.get_current_span())
+            )
+            with span_context as span:
+                try:
+                    await self.app(scope, receive, log_response_start)
+                except Exception as error:
+                    span.record_exception(error)
+                    span.set_status(Status(StatusCode.ERROR, type(error).__name__))
+                    status_code = _error_details(error)[0]
+                    logger.error(
+                        "HTTP request failed request_id=%s method=%s path=%s "
+                        "error_type=%s",
+                        request_id,
+                        method,
+                        path,
+                        type(error).__name__,
+                    )
+                    raise
+                finally:
+                    span.set_attribute("http.response.status_code", status_code)
+                    if status_code >= 500:
+                        span.set_status(Status(StatusCode.ERROR))
         finally:
             duration = time.monotonic() - started_at
             logger.info(
