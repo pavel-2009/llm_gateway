@@ -39,6 +39,11 @@ class AppConfig(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = Field(default=8000, ge=1, le=65535)
 
+    OTEL_ENABLED: bool = False
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4318/v1/traces"
+    OTEL_SERVICE_NAME: str = "llm-gateway"
+    OTEL_TRACE_SAMPLE_RATIO: float = Field(default=1.0, ge=0, le=1)
+
     OLLAMA_MODEL: str = "qwen3:8b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
@@ -101,6 +106,31 @@ class AppConfig(BaseSettings):
             parsed_url.port
         except ValueError as error:
             raise ValueError("OLLAMA_BASE_URL must have a valid port") from error
+        return value
+
+    @field_validator("OTEL_EXPORTER_OTLP_ENDPOINT")
+    @classmethod
+    def validate_otlp_endpoint(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        parsed_url = urlsplit(value)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+            raise ValueError(
+                "OTEL_EXPORTER_OTLP_ENDPOINT must be a valid HTTP(S) URL"
+            )
+        try:
+            parsed_url.port
+        except ValueError as error:
+            raise ValueError(
+                "OTEL_EXPORTER_OTLP_ENDPOINT must have a valid port"
+            ) from error
+        return value
+
+    @field_validator("OTEL_SERVICE_NAME")
+    @classmethod
+    def validate_otel_service_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("OTEL_SERVICE_NAME must not be empty")
         return value
 
     @field_validator(
