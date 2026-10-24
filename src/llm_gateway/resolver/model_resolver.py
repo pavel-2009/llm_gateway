@@ -180,6 +180,7 @@ class ModelResolver:
                     raise AllModelsUnavailableError(failures)
 
             except asyncio.TimeoutError:
+                span.set_attribute("llm.outcome", "timeout")
                 logger.error(
                     "Resolver timed out request_id=%s trace_id=%s "
                     "operation=%s tier=%s "
@@ -191,6 +192,9 @@ class ModelResolver:
                     len(models),
                     timeout,
                 )
+                raise
+            except Exception:
+                span.set_attribute("llm.outcome", "error")
                 raise
 
     async def _execute(
@@ -362,6 +366,9 @@ class ModelResolver:
                         raise AllModelsUnavailableError(failures)
                 except asyncio.TimeoutError:
                     span.set_attribute("llm.outcome", "timeout")
+                    raise
+                except Exception:
+                    span.set_attribute("llm.outcome", "error")
                     raise
 
         return stream()
