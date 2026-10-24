@@ -18,6 +18,23 @@ def test_provider_keys_are_optional_and_anthropic_alias_is_supported() -> None:
     assert settings.CLAUDE_API_KEY == "anthropic-key"
 
 
+def test_otel_settings_can_be_configured() -> None:
+    settings = AppConfig(
+        _env_file=None,
+        OTEL_ENABLED=True,
+        OTEL_EXPORTER_OTLP_ENDPOINT=" https://tempo.example:4318/v1/traces/ ",
+        OTEL_SERVICE_NAME=" gateway ",
+        OTEL_TRACE_SAMPLE_RATIO=0.25,
+    )
+
+    assert settings.OTEL_ENABLED is True
+    assert settings.OTEL_EXPORTER_OTLP_ENDPOINT == (
+        "https://tempo.example:4318/v1/traces"
+    )
+    assert settings.OTEL_SERVICE_NAME == "gateway"
+    assert settings.OTEL_TRACE_SAMPLE_RATIO == 0.25
+
+
 def test_settings_load_from_container_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -46,6 +63,9 @@ def test_settings_load_from_container_environment(
         {"PORT": 65536},
         {"HOST": " "},
         {"OLLAMA_BASE_URL": "ollama:11434"},
+        {"OTEL_EXPORTER_OTLP_ENDPOINT": "tempo:4318"},
+        {"OTEL_SERVICE_NAME": " "},
+        {"OTEL_TRACE_SAMPLE_RATIO": 1.1},
         {"REQUEST_TIMEOUT": 0},
         {"STREAM_TIMEOUT": float("inf")},
         {"MAX_CONCURRENT_REQUESTS": 0},
