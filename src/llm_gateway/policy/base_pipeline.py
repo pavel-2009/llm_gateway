@@ -5,6 +5,8 @@ from collections.abc import AsyncIterable, AsyncIterator
 import logging
 from typing import cast
 
+from opentelemetry import trace
+
 from llm_gateway.adapter.contracts import GenerateResponse
 from llm_gateway.adapter.provider import LLMProvider
 from llm_gateway.core.config import ExtractedReview
@@ -12,6 +14,7 @@ from llm_gateway.policy.error_policy import ErrorPolicy
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.policy.retry_policy import RetryPolicy
 from llm_gateway.prometheus import prometheus
+from llm_gateway.telemetry import tracer
 
 
 PipelineResult = GenerateResponse | ExtractedReview | AsyncIterable[str]
@@ -157,6 +160,15 @@ class BasePolicyPipeline:
             context.operation.value,
             self.model,
         )
+        trace.get_current_span().add_event(
+            "provider.retry_scheduled",
+            attributes={
+                "llm.provider.name": self.provider_name,
+                "llm.operation": context.operation.value,
+                "llm.retry.attempt": context.retries_made,
+                "llm.retry.delay_seconds": delay,
+            },
+        )
         await asyncio.sleep(delay)
 
     async def _execute_operation(
@@ -166,27 +178,15 @@ class BasePolicyPipeline:
         """Execute the operation with the given prompt and model."""
 
         if context.operation == OperationType.GENERATE:
-            started_at = prometheus.provider_operation_started(
-                self.provider_name,
-                context.operation.value,
-                self.model,
-            )
-            succeeded = False
-            try:
-                result = await self.provider.generate(context.prompt)
-                succeeded = True
-                return result
-            finally:
-                prometheus.provider_operation_completed(
-                    self.provider_name,
-                    context.operation.value,
-                    self.model,
-                    started_at,
-                    outcome="success" if succeeded else "error",
-                )
-        if context.operation == OperationType.STREAM:
-
-            async def measured_stream() -> AsyncIterator[str]:
+            with tracer.start_as_current_span(
+                f"llm.provider.{context.operation.value}",
+                attributes={
+                    "llm.provider.name": self.provider_name,
+                    "llm.operation": context.operation.value,
+                    "llm.request.model": self.model,
+                    "llm.retry.attempt": context.retries_made,
+                },
+            ) as span:
                 started_at = prometheus.provider_operation_started(
                     self.provider_name,
                     context.operation.value,
@@ -194,10 +194,14 @@ class BasePolicyPipeline:
                 )
                 succeeded = False
                 try:
-                    async for chunk in self.provider.stream(context.prompt):
-                        yield chunk
+                    result = await self.provider.generate(context.prompt)
                     succeeded = True
+                    return result
                 finally:
+                    span.set_attribute(
+                        "llm.outcome",
+                        "success" if succeeded else "error",
+                    )
                     prometheus.provider_operation_completed(
                         self.provider_name,
                         context.operation.value,
@@ -205,25 +209,72 @@ class BasePolicyPipeline:
                         started_at,
                         outcome="success" if succeeded else "error",
                     )
+        if context.operation == OperationType.STREAM:
+
+            async def measured_stream() -> AsyncIterator[str]:
+                with tracer.start_as_current_span(
+                    f"llm.provider.{context.operation.value}",
+                    attributes={
+                        "llm.provider.name": self.provider_name,
+                        "llm.operation": context.operation.value,
+                        "llm.request.model": self.model,
+                        "llm.retry.attempt": context.retries_made,
+                    },
+                ) as span:
+                    started_at = prometheus.provider_operation_started(
+                        self.provider_name,
+                        context.operation.value,
+                        self.model,
+                    )
+                    succeeded = False
+                    try:
+                        async for chunk in self.provider.stream(context.prompt):
+                            yield chunk
+                        succeeded = True
+                    finally:
+                        span.set_attribute(
+                            "llm.outcome",
+                            "success" if succeeded else "error",
+                        )
+                        prometheus.provider_operation_completed(
+                            self.provider_name,
+                            context.operation.value,
+                            self.model,
+                            started_at,
+                            outcome="success" if succeeded else "error",
+                        )
 
             return measured_stream()
         if context.operation == OperationType.EXTRACT:
-            started_at = prometheus.provider_operation_started(
-                self.provider_name,
-                context.operation.value,
-                self.model,
-            )
-            succeeded = False
-            try:
-                result = await self.provider.extract(context.prompt)
-                succeeded = True
-                return result
-            finally:
-                prometheus.provider_operation_completed(
+            with tracer.start_as_current_span(
+                f"llm.provider.{context.operation.value}",
+                attributes={
+                    "llm.provider.name": self.provider_name,
+                    "llm.operation": context.operation.value,
+                    "llm.request.model": self.model,
+                    "llm.retry.attempt": context.retries_made,
+                },
+            ) as span:
+                started_at = prometheus.provider_operation_started(
                     self.provider_name,
                     context.operation.value,
                     self.model,
-                    started_at,
-                    outcome="success" if succeeded else "error",
                 )
+                succeeded = False
+                try:
+                    result = await self.provider.extract(context.prompt)
+                    succeeded = True
+                    return result
+                finally:
+                    span.set_attribute(
+                        "llm.outcome",
+                        "success" if succeeded else "error",
+                    )
+                    prometheus.provider_operation_completed(
+                        self.provider_name,
+                        context.operation.value,
+                        self.model,
+                        started_at,
+                        outcome="success" if succeeded else "error",
+                    )
         raise ValueError(f"Unsupported operation: {context.operation}")
