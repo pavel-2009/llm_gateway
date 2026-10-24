@@ -37,13 +37,16 @@ curl -f http://localhost:8000/openapi.json
 Prometheus — на `http://localhost:9090`. Grafana с преднастроенным dashboard
 «LLM Gateway» доступна на `http://localhost:3000` (локальные учётные данные по
 умолчанию: `admin` / `admin`). В Grafana подключены Prometheus для графиков и
-Tempo для поиска трейсов. Compose включает экспорт трасс OpenTelemetry через
+Jaeger для поиска трейсов. Отдельный интерфейс Jaeger доступен на
+`http://localhost:16686`. Compose включает экспорт трасс OpenTelemetry через
 OTLP/HTTP; трейсы связывают HTTP-запрос, LLM-операцию, попытки провайдера и
 повторы. Содержимое prompt и ключи провайдеров в атрибуты трейсов не записываются.
 Для локального запуска без Compose экспорт выключен по умолчанию; задайте
 `OTEL_ENABLED=true` и `OTEL_EXPORTER_OTLP_ENDPOINT`, чтобы включить его.
 Перед публикацией Grafana за пределами локальной машины задайте свой
 `GRAFANA_ADMIN_PASSWORD`.
+Jaeger использует in-memory storage для локальной отладки: его трейсы очищаются
+при перезапуске контейнера.
 
 При первом запуске Compose ждёт, пока
 сервис `ollama-model` скачает модель; до окончания загрузки gateway и его

@@ -10,13 +10,13 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: qwen3:8b
       OTEL_ENABLED: "true"
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318/v1/traces
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
     ports:
       - "${PORT:-8000}:8000"
     depends_on:
       ollama-model:
         condition: service_completed_successfully
-      tempo:
+      jaeger:
         condition: service_started
 
   ollama:
@@ -50,12 +50,10 @@ services:
     ports:
       - "9090:9090"
 
-  tempo:
-    image: grafana/tempo:2.7.2
-    command: ["-config.file=/etc/tempo.yaml"]
-    volumes:
-      - ./tempo.yaml:/etc/tempo.yaml:ro
-      - tempo_data:/var/tempo
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    ports:
+      - "127.0.0.1:16686:16686"
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -70,9 +68,8 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
-      - tempo
+      - jaeger
 
 volumes:
   ollama_data:
-  tempo_data:
   grafana_data:

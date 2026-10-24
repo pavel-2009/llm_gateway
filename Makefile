@@ -9,3 +9,6 @@ up:
 
 down:
 	docker compose down
+
+jaeger-logs:
+	docker compose logs -f jaeger
