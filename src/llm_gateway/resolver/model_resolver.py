@@ -20,7 +20,10 @@ from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.resolver.model_registry import ModelRegistry
 from llm_gateway.resolver.resolver_context import ResolveContext
 from llm_gateway.core.config import ExtractedReview, config
-from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.core.logging_context import (
+    current_trace_id,
+    request_id_context,
+)
 from llm_gateway.telemetry import tracer
 
 
@@ -79,12 +82,14 @@ class ModelResolver:
                 "llm.model_tier": context.model.value,
             },
         ) as span:
+            trace_id = current_trace_id()
             models = self.model_registry.get_models(context.model)
             span.set_attribute("llm.resolver.candidate_count", len(models))
             logger.info(
-                "Resolver started request_id=%s operation=%s tier=%s "
+                "Resolver started request_id=%s trace_id=%s operation=%s tier=%s "
                 "candidate_count=%s timeout_seconds=%.1f",
                 request_id,
+                trace_id,
                 context.operation.value,
                 context.model.value,
                 len(models),
@@ -111,9 +116,10 @@ class ModelResolver:
                             )
                             span.set_attribute("llm.outcome", "success")
                             logger.info(
-                                "Resolver selected request_id=%s "
+                                "Resolver selected request_id=%s trace_id=%s "
                                 "provider=%s model=%s",
                                 request_id,
+                                trace_id,
                                 provider_name,
                                 model_name,
                             )
@@ -129,9 +135,11 @@ class ModelResolver:
                                     },
                                 )
                                 logger.error(
-                                    "Resolver stopped request_id=%s provider=%s "
+                                    "Resolver stopped request_id=%s trace_id=%s "
+                                    "provider=%s "
                                     "model=%s error_type=%s fallback=false",
                                     request_id,
+                                    trace_id,
                                     provider_name,
                                     model_name,
                                     type(error).__name__,
@@ -147,8 +155,10 @@ class ModelResolver:
                             )
                             logger.warning(
                                 "Resolver provider failed request_id=%s "
+                                "trace_id=%s "
                                 "provider=%s model=%s error_type=%s fallback=true",
                                 request_id,
+                                trace_id,
                                 provider_name,
                                 model_name,
                                 type(error).__name__,
@@ -161,17 +171,21 @@ class ModelResolver:
                     )
                     logger.error(
                         "Resolver exhausted candidates request_id=%s "
+                        "trace_id=%s "
                         "failed_candidate_count=%s",
                         request_id,
+                        trace_id,
                         len(failures),
                     )
                     raise AllModelsUnavailableError(failures)
 
             except asyncio.TimeoutError:
                 logger.error(
-                    "Resolver timed out request_id=%s operation=%s tier=%s "
+                    "Resolver timed out request_id=%s trace_id=%s "
+                    "operation=%s tier=%s "
                     "candidate_count=%s timeout_seconds=%.1f",
                     request_id,
+                    trace_id,
                     context.operation.value,
                     context.model.value,
                     len(models),
@@ -188,8 +202,10 @@ class ModelResolver:
         model_name: str,
     ) -> RESOLVER_RESULT:
         logger.info(
-            "Resolver executing request_id=%s operation=%s provider=%s model=%s",
+            "Resolver executing request_id=%s trace_id=%s operation=%s "
+            "provider=%s model=%s",
             request_id,
+            current_trace_id(),
             context.operation.value,
             provider_name,
             model_name,
@@ -225,13 +241,16 @@ class ModelResolver:
                     "llm.model_tier": context.model.value,
                 },
             ) as span:
+                trace_id = current_trace_id()
                 try:
                     models = self.model_registry.get_models(context.model)
                     span.set_attribute("llm.resolver.candidate_count", len(models))
                     logger.info(
-                        "Resolver started request_id=%s operation=%s tier=%s "
+                        "Resolver started request_id=%s trace_id=%s "
+                        "operation=%s tier=%s "
                         "candidate_count=%s",
                         request_id,
+                        trace_id,
                         context.operation.value,
                         context.model.value,
                         len(models),
@@ -244,8 +263,10 @@ class ModelResolver:
                             try:
                                 logger.info(
                                     "Resolver stream candidate started "
-                                    "request_id=%s provider=%s model=%s",
+                                    "request_id=%s trace_id=%s provider=%s "
+                                    "model=%s",
                                     request_id,
+                                    trace_id,
                                     provider_name,
                                     model_name,
                                 )
@@ -274,8 +295,10 @@ class ModelResolver:
                                 span.set_attribute("llm.outcome", "success")
                                 logger.info(
                                     "Resolver stream candidate completed "
-                                    "request_id=%s provider=%s model=%s",
+                                    "request_id=%s trace_id=%s provider=%s "
+                                    "model=%s",
                                     request_id,
+                                    trace_id,
                                     provider_name,
                                     model_name,
                                 )
@@ -293,9 +316,11 @@ class ModelResolver:
                                     )
                                     logger.error(
                                         "Resolver stream stopped request_id=%s "
+                                        "trace_id=%s "
                                         "provider=%s model=%s error_type=%s "
                                         "fallback=false emitted=%s",
                                         request_id,
+                                        trace_id,
                                         provider_name,
                                         model_name,
                                         type(error).__name__,
@@ -312,9 +337,11 @@ class ModelResolver:
                                 )
                                 logger.warning(
                                     "Resolver stream provider failed "
-                                    "request_id=%s provider=%s model=%s "
+                                    "request_id=%s trace_id=%s provider=%s "
+                                    "model=%s "
                                     "error_type=%s fallback=true",
                                     request_id,
+                                    trace_id,
                                     provider_name,
                                     model_name,
                                     type(error).__name__,
@@ -326,8 +353,10 @@ class ModelResolver:
                         )
                         logger.error(
                             "Resolver stream exhausted candidates "
-                            "request_id=%s failed_candidate_count=%s",
+                            "request_id=%s trace_id=%s "
+                            "failed_candidate_count=%s",
                             request_id,
+                            trace_id,
                             len(failures),
                         )
                         raise AllModelsUnavailableError(failures)

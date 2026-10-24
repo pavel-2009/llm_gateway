@@ -23,7 +23,10 @@ from llm_gateway.adapter.errors import (
     LLMProviderError,
     ProviderTimeoutError,
 )
-from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.core.logging_context import (
+    current_trace_id,
+    request_id_context,
+)
 from llm_gateway.llm_gateway import LLMGateway
 from llm_gateway.prometheus import prometheus
 from llm_gateway.models import (
@@ -72,12 +75,6 @@ class RequestLoggingMiddleware:
         )
         if track_metrics:
             prometheus.request_started(method, path)
-        logger.info(
-            "HTTP request started request_id=%s method=%s path=%s",
-            request_id,
-            method,
-            path,
-        )
 
         async def log_response_start(message: Message) -> None:
             nonlocal status_code
@@ -85,6 +82,7 @@ class RequestLoggingMiddleware:
                 status_code = message["status"]
             await send(message)
 
+        trace_id: str | None = None
         try:
             incoming_context = extract_trace_context(
                 {
@@ -108,6 +106,15 @@ class RequestLoggingMiddleware:
                 else nullcontext(trace.get_current_span())
             )
             with span_context as span:
+                trace_id = current_trace_id()
+                logger.info(
+                    "HTTP request started request_id=%s trace_id=%s "
+                    "method=%s path=%s",
+                    request_id,
+                    trace_id,
+                    method,
+                    path,
+                )
                 try:
                     await self.app(scope, receive, log_response_start)
                 except Exception as error:
@@ -115,9 +122,11 @@ class RequestLoggingMiddleware:
                     span.set_status(Status(StatusCode.ERROR, type(error).__name__))
                     status_code = _error_details(error)[0]
                     logger.error(
-                        "HTTP request failed request_id=%s method=%s path=%s "
+                        "HTTP request failed request_id=%s trace_id=%s "
+                        "method=%s path=%s "
                         "error_type=%s",
                         request_id,
+                        trace_id,
                         method,
                         path,
                         type(error).__name__,
@@ -130,9 +139,11 @@ class RequestLoggingMiddleware:
         finally:
             duration = time.monotonic() - started_at
             logger.info(
-                "HTTP request completed request_id=%s method=%s path=%s "
+                "HTTP request completed request_id=%s trace_id=%s "
+                "method=%s path=%s "
                 "status_code=%s duration_ms=%.1f",
                 request_id,
+                trace_id,
                 method,
                 path,
                 status_code,
@@ -198,8 +209,9 @@ async def handle_unexpected_error(
 ) -> JSONResponse:
     status_code, _, message = _error_details(error)
     logger.error(
-        "API request failed request_id=%s path=%s error_type=%s",
+        "API request failed request_id=%s trace_id=%s path=%s error_type=%s",
         request_id_context.get(),
+        current_trace_id(),
         request.url.path,
         type(error).__name__,
     )
@@ -215,8 +227,10 @@ async def handle_invalid_request(
     _error: RequestValidationError,
 ) -> JSONResponse:
     logger.info(
-        "API request validation failed request_id=%s path=%s error_count=%s",
+        "API request validation failed request_id=%s trace_id=%s "
+        "path=%s error_count=%s",
         request_id_context.get(),
+        current_trace_id(),
         request.url.path,
         len(_error.errors()),
     )
@@ -229,8 +243,9 @@ async def handle_invalid_request(
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(request: Request) -> GenerateResponse:
     logger.info(
-        "API operation accepted request_id=%s operation=generate",
+        "API operation accepted request_id=%s trace_id=%s operation=generate",
         request_id_context.get(),
+        current_trace_id(),
     )
     return await gateway.generate(request.prompt, request.model)
 
@@ -238,8 +253,9 @@ async def generate(request: Request) -> GenerateResponse:
 @app.post("/extract", response_model=ExtractedReview)
 async def extract(request: Request) -> ExtractedReview:
     logger.info(
-        "API operation accepted request_id=%s operation=extract",
+        "API operation accepted request_id=%s trace_id=%s operation=extract",
         request_id_context.get(),
+        current_trace_id(),
     )
     return await gateway.extract(request.prompt, request.model)
 
@@ -274,8 +290,9 @@ async def extract(request: Request) -> ExtractedReview:
 )
 async def stream(request: Request) -> StreamingResponse:
     logger.info(
-        "API operation accepted request_id=%s operation=stream",
+        "API operation accepted request_id=%s trace_id=%s operation=stream",
         request_id_context.get(),
+        current_trace_id(),
     )
 
     async def chunks() -> AsyncIterator[str]:
@@ -296,8 +313,10 @@ async def stream(request: Request) -> StreamingResponse:
                 )
         except asyncio.TimeoutError as exception:
             logger.error(
-                "API operation timed out request_id=%s operation=stream",
+                "API operation timed out request_id=%s trace_id=%s "
+                "operation=stream",
                 request_id_context.get(),
+                current_trace_id(),
             )
             _, code, message = _error_details(exception)
             error = StreamError(code=code, message=message)
@@ -305,8 +324,9 @@ async def stream(request: Request) -> StreamingResponse:
             return
         except Exception as exception:
             logger.error(
-                "API stream failed request_id=%s error_type=%s",
+                "API stream failed request_id=%s trace_id=%s error_type=%s",
                 request_id_context.get(),
+                current_trace_id(),
                 type(exception).__name__,
             )
             _, code, message = _error_details(exception)

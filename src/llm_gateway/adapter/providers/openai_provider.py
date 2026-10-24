@@ -20,7 +20,10 @@ from llm_gateway.core.config import (
     ExtractedReview,
     config,
 )
-from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.core.logging_context import (
+    current_trace_id,
+    request_id_context,
+)
 from llm_gateway.telemetry import http_client_span
 
 
@@ -44,10 +47,12 @@ class OpenAIProvider(LLMProvider):
     async def generate(self, prompt: str) -> GenerateResponse:
         """Generate text from a prompt"""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=generation model=%s",
             request_id,
+            trace_id,
             Providers.OPENAI,
             self.model,
         )
@@ -69,9 +74,11 @@ class OpenAIProvider(LLMProvider):
                 model=self.model
             )
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=generation output_chars=%s",
                 request_id,
+                trace_id,
                 Providers.OPENAI,
                 len(result.text),
             )
@@ -79,9 +86,11 @@ class OpenAIProvider(LLMProvider):
 
         except Exception as e:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=generation error_type=%s",
                 request_id,
+                trace_id,
                 Providers.OPENAI,
                 type(e).__name__,
             )
@@ -90,12 +99,14 @@ class OpenAIProvider(LLMProvider):
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream text from a prompt"""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         chunks = 0
         output_chars = 0
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=streaming model=%s",
             request_id,
+            trace_id,
             Providers.OPENAI,
             self.model,
         )
@@ -126,18 +137,22 @@ class OpenAIProvider(LLMProvider):
                             code=error.code if error else None,
                         )
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=streaming chunks=%s output_chars=%s",
                 request_id,
+                trace_id,
                 Providers.OPENAI,
                 chunks,
                 output_chars,
             )
         except Exception as e:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=streaming chunks=%s error_type=%s",
                 request_id,
+                trace_id,
                 Providers.OPENAI,
                 chunks,
                 type(e).__name__,
@@ -147,10 +162,12 @@ class OpenAIProvider(LLMProvider):
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt"""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=extraction model=%s",
             request_id,
+            trace_id,
             Providers.OPENAI,
             self.model,
         )
@@ -170,18 +187,22 @@ class OpenAIProvider(LLMProvider):
                 response.output_text
             )
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=extraction",
                 request_id,
+                trace_id,
                 Providers.OPENAI,
             )
             return result
 
         except Exception as e:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=extraction error_type=%s",
                 request_id,
+                trace_id,
                 Providers.OPENAI,
                 type(e).__name__,
             )

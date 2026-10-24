@@ -67,6 +67,12 @@ def test_generate_endpoint(
     response = TestClient(main.app).post(
         "/generate",
         json={"prompt": "hello", "model": "medium"},
+        headers={
+            "traceparent": (
+                "00-1234567890abcdef1234567890abcdef-"
+                "1234567890abcdef-01"
+            ),
+        },
     )
 
     assert response.status_code == 200
@@ -77,6 +83,7 @@ def test_generate_endpoint(
     }
     assert fake_gateway.model == Model.MEDIUM
     assert "request_id=" in caplog.text
+    assert "trace_id=1234567890abcdef1234567890abcdef" in caplog.text
     assert "operation=generate" in caplog.text
     assert "hello" not in caplog.text
 

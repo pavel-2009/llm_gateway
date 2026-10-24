@@ -20,7 +20,10 @@ from llm_gateway.core.config import (
     ExtractedReview,
     config,
 )
-from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.core.logging_context import (
+    current_trace_id,
+    request_id_context,
+)
 from llm_gateway.telemetry import http_client_span
 
 
@@ -49,10 +52,12 @@ class OllamaProvider(LLMProvider):
     async def generate(self, prompt: str) -> GenerateResponse:
         """Generate text from a prompt."""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=generation model=%s",
             request_id,
+            trace_id,
             Providers.OLLAMA,
             self.model,
         )
@@ -84,18 +89,22 @@ class OllamaProvider(LLMProvider):
                 model=self.model,
             )
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=generation output_chars=%s",
                 request_id,
+                trace_id,
                 Providers.OLLAMA,
                 len(result.text),
             )
             return result
         except Exception as exc:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=generation error_type=%s",
                 request_id,
+                trace_id,
                 Providers.OLLAMA,
                 type(exc).__name__,
             )
@@ -104,12 +113,14 @@ class OllamaProvider(LLMProvider):
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Ollama."""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         chunks = 0
         output_chars = 0
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=streaming model=%s",
             request_id,
+            trace_id,
             Providers.OLLAMA,
             self.model,
         )
@@ -144,18 +155,22 @@ class OllamaProvider(LLMProvider):
                                 output_chars += len(text)
                                 yield text
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=streaming chunks=%s output_chars=%s",
                 request_id,
+                trace_id,
                 Providers.OLLAMA,
                 chunks,
                 output_chars,
             )
         except Exception as exc:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=streaming chunks=%s error_type=%s",
                 request_id,
+                trace_id,
                 Providers.OLLAMA,
                 chunks,
                 type(exc).__name__,
@@ -165,10 +180,12 @@ class OllamaProvider(LLMProvider):
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=extraction model=%s",
             request_id,
+            trace_id,
             Providers.OLLAMA,
             self.model,
         )
@@ -200,17 +217,21 @@ class OllamaProvider(LLMProvider):
                 payload["message"]["content"]
             )
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=extraction",
                 request_id,
+                trace_id,
                 Providers.OLLAMA,
             )
             return result
         except Exception as exc:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=extraction error_type=%s",
                 request_id,
+                trace_id,
                 Providers.OLLAMA,
                 type(exc).__name__,
             )

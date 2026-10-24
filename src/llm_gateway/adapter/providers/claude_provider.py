@@ -19,7 +19,10 @@ from llm_gateway.core.config import (
     ExtractedReview,
     config,
 )
-from llm_gateway.core.logging_context import request_id_context
+from llm_gateway.core.logging_context import (
+    current_trace_id,
+    request_id_context,
+)
 from llm_gateway.telemetry import http_client_span
 
 
@@ -42,10 +45,12 @@ class ClaudeProvider(LLMProvider):
     async def generate(self, prompt: str) -> GenerateResponse:
         """Generate text from a prompt."""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=generation model=%s",
             request_id,
+            trace_id,
             Providers.CLAUDE,
             self.model,
         )
@@ -68,9 +73,11 @@ class ClaudeProvider(LLMProvider):
                 if block.type == "text"
             )
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=generation output_chars=%s",
                 request_id,
+                trace_id,
                 Providers.CLAUDE,
                 len(text),
             )
@@ -81,9 +88,11 @@ class ClaudeProvider(LLMProvider):
             )
         except Exception as exc:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=generation error_type=%s",
                 request_id,
+                trace_id,
                 Providers.CLAUDE,
                 type(exc).__name__,
             )
@@ -92,12 +101,14 @@ class ClaudeProvider(LLMProvider):
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream generated text from Claude."""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         chunks = 0
         output_chars = 0
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=streaming model=%s",
             request_id,
+            trace_id,
             Providers.CLAUDE,
             self.model,
         )
@@ -118,18 +129,22 @@ class ClaudeProvider(LLMProvider):
                         output_chars += len(text)
                         yield text
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=streaming chunks=%s output_chars=%s",
                 request_id,
+                trace_id,
                 Providers.CLAUDE,
                 chunks,
                 output_chars,
             )
         except Exception as exc:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=streaming chunks=%s error_type=%s",
                 request_id,
+                trace_id,
                 Providers.CLAUDE,
                 chunks,
                 type(exc).__name__,
@@ -139,10 +154,12 @@ class ClaudeProvider(LLMProvider):
     async def extract(self, prompt: str) -> ExtractedReview:
         """Extract structured data from a prompt."""
         request_id = request_id_context.get()
+        trace_id = current_trace_id()
         logger.info(
-            "Provider request started request_id=%s provider=%s "
+            "Provider request started request_id=%s trace_id=%s provider=%s "
             "operation=extraction model=%s",
             request_id,
+            trace_id,
             Providers.CLAUDE,
             self.model,
         )
@@ -166,17 +183,21 @@ class ClaudeProvider(LLMProvider):
             )
             result = ExtractedReview.model_validate_json(text)
             logger.info(
-                "Provider request completed request_id=%s provider=%s "
+                "Provider request completed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=extraction",
                 request_id,
+                trace_id,
                 Providers.CLAUDE,
             )
             return result
         except Exception as exc:
             logger.error(
-                "Provider request failed request_id=%s provider=%s "
+                "Provider request failed request_id=%s trace_id=%s "
+                "provider=%s "
                 "operation=extraction error_type=%s",
                 request_id,
+                trace_id,
                 Providers.CLAUDE,
                 type(exc).__name__,
             )
