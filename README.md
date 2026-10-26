@@ -125,8 +125,12 @@ uv run locust -f loadtest/locustfile.py --host http://127.0.0.1:8000
 uv run locust -f loadtest/locustfile.py \
   --host http://127.0.0.1:8000 \
   --users 50 --spawn-rate 5 --run-time 2m --headless \
-  --csv /tmp/llm-gateway-load
+  --csv loadtest/results/llm-gateway-load
 ```
+
+Результаты каждого прогона сохраняются в `loadtest/results/` в CSV-файлы
+`llm-gateway-load_stats.csv`, `llm-gateway-load_stats_history.csv` и
+`llm-gateway-load_failures.csv`. Locust автоматически создаёт каталог.
 
 Locust измеряет пропускную способность отдельно по каждому endpoint, число
 запросов и ошибок, а также
