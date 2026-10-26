@@ -12,11 +12,22 @@ from llm_gateway.adapter.errors import (
 	ModelNotFoundError,
 	PermissionDeniedError,
 	ProviderConnectionError,
+	ProviderReportedError,
 	ProviderUnavailableError,
 	ProviderTimeoutError,
 	RateLimitError,
 	raise_provider_error,
 )
+
+
+def test_provider_reported_error_preserves_message_and_code() -> None:
+	error = ProviderReportedError(
+		"provider reported a failed response",
+		code="server_error",
+	)
+
+	assert str(error) == "provider reported a failed response"
+	assert error.code == "server_error"
 
 
 @pytest.mark.parametrize(

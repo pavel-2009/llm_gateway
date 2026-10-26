@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from llm_gateway.adapter.errors import ProviderUnavailableError
 from llm_gateway.adapter.contracts import Providers
 from llm_gateway.adapter.prompt import build_prompt
 from llm_gateway.adapter.providers import claude_provider, ollama_provider, openai_provider
@@ -100,6 +101,38 @@ async def test_openai_provider_generate_stream_and_extract(
 
 
 @pytest.mark.asyncio
+async def test_openai_stream_maps_provider_reported_failure(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	failed_event = SimpleNamespace(
+		type="response.failed",
+		response=SimpleNamespace(
+			error=SimpleNamespace(
+				message="temporary provider failure",
+				code="server_error",
+			),
+		),
+	)
+	create = AsyncMock(return_value=_chunks(failed_event))
+	monkeypatch.setattr(
+		openai_provider,
+		"AsyncOpenAI",
+		lambda **kwargs: SimpleNamespace(
+			responses=SimpleNamespace(create=create)
+		),
+	)
+	provider = OpenAIProvider(api_key="test-key", model="test-model")
+
+	with pytest.raises(ProviderUnavailableError) as exc_info:
+		[chunk async for chunk in provider.stream("prompt")]
+
+	assert "temporary provider failure" in str(exc_info.value)
+	assert exc_info.value.provider == Providers.OPENAI
+	assert exc_info.value.category == "provider_unavailable"
+	assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
 async def test_claude_provider_generate_stream_and_extract(
 	monkeypatch: pytest.MonkeyPatch,
 	valid_review_json: str,
@@ -187,5 +220,4 @@ async def test_ollama_provider_generate_stream_and_extract(
 def test_remote_providers_require_api_keys(provider_type: type) -> None:
 	with pytest.raises(ValueError, match="API_KEY is required"):
 		provider_type(api_key=None)
-
 

@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import logging
 import time
 from uuid import uuid4
@@ -90,22 +90,36 @@ class RequestLoggingMiddleware:
                     for key, value in scope.get("headers", [])
                 }
             )
-            span_context = (
-                tracer.start_as_current_span(
-                    f"HTTP {method} {route}",
-                    context=incoming_context,
-                    record_exception=False,
-                    set_status_on_exception=False,
-                    attributes={
-                        "http.request.method": method,
-                        "http.route": route,
-                        "request.id": request_id,
-                    },
-                )
-                if track_metrics
-                else nullcontext(trace.get_current_span())
-            )
-            with span_context as span:
+            with ExitStack() as span_stack:
+                try:
+                    span_context = (
+                        tracer.start_as_current_span(
+                            f"HTTP {method} {route}",
+                            context=incoming_context,
+                            record_exception=False,
+                            set_status_on_exception=False,
+                            attributes={
+                                "http.request.method": method,
+                                "http.route": route,
+                                "request.id": request_id,
+                            },
+                        )
+                        if track_metrics
+                        else nullcontext(trace.get_current_span())
+                    )
+                    span = span_stack.enter_context(span_context)
+                except Exception:
+                    if not track_metrics:
+                        raise
+                    logger.exception(
+                        "HTTP tracing span creation failed request_id=%s "
+                        "method=%s path=%s; continuing without tracing",
+                        request_id,
+                        method,
+                        path,
+                    )
+                    span = trace.get_current_span()
+
                 trace_id = current_trace_id()
                 logger.info(
                     "HTTP request started request_id=%s trace_id=%s "

@@ -179,6 +179,11 @@ def test_resolver_selects_configured_model(
     )
 
 
+def test_model_registry_rejects_unknown_model_tier() -> None:
+    with pytest.raises(ValueError, match="Unsupported model tier: invalid"):
+        model_registry.ModelRegistry().get_models("invalid")  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "provider_name",
     [
@@ -209,6 +214,11 @@ def test_resolver_creates_provider_adapter(
 
     assert isinstance(adapter, FakeProvider)
     assert adapter.model == "selected-model"
+
+
+def test_model_registry_rejects_unknown_provider() -> None:
+    with pytest.raises(ValueError, match="Unsupported provider: invalid"):
+        model_registry.ModelRegistry().create_provider("invalid", "test-model")
 
 
 @pytest.mark.asyncio

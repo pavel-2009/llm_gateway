@@ -10,6 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+import httpx
 import pytest
 
 import llm_gateway.app as app_module
@@ -26,6 +27,93 @@ from llm_gateway.llm_gateway import LLMGateway
 from llm_gateway.policy.base_pipeline import BasePolicyPipeline
 from llm_gateway.policy.request_context import OperationType, RequestContext
 from llm_gateway.resolver.resolver_context import ResolveContext
+
+
+def test_configure_tracing_uses_configured_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(telemetry_module.config, "OTEL_ENABLED", True)
+    monkeypatch.setattr(
+        telemetry_module.config,
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "https://tempo.example/v1/traces",
+    )
+    monkeypatch.setattr(
+        telemetry_module.config,
+        "OTEL_SERVICE_NAME",
+        "test-gateway",
+    )
+    monkeypatch.setattr(
+        telemetry_module.config,
+        "OTEL_TRACE_SAMPLE_RATIO",
+        0.25,
+    )
+    exporter = object()
+    processor = object()
+    configured: dict[str, object] = {}
+
+    class FakeTracerProvider:
+        def __init__(self, **kwargs: object) -> None:
+            configured["provider_kwargs"] = kwargs
+
+        def add_span_processor(self, span_processor: object) -> None:
+            configured["processor"] = span_processor
+
+        def shutdown(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        telemetry_module,
+        "TracerProvider",
+        FakeTracerProvider,
+    )
+    monkeypatch.setattr(
+        telemetry_module,
+        "OTLPSpanExporter",
+        lambda *, endpoint: configured.update(endpoint=endpoint) or exporter,
+    )
+    monkeypatch.setattr(
+        telemetry_module,
+        "BatchSpanProcessor",
+        lambda value: configured.update(exporter=value) or processor,
+    )
+    monkeypatch.setattr(
+        telemetry_module.trace,
+        "set_tracer_provider",
+        lambda value: configured.update(tracer_provider=value),
+    )
+    registered: list[object] = []
+    monkeypatch.setattr(
+        telemetry_module.atexit,
+        "register",
+        lambda callback: registered.append(callback),
+    )
+
+    telemetry_module._configure_tracing()
+
+    provider_kwargs = configured["provider_kwargs"]
+    assert isinstance(provider_kwargs, dict)
+    resource = provider_kwargs["resource"]
+    assert resource.attributes["service.name"] == "test-gateway"
+    assert provider_kwargs["sampler"].__class__.__name__ == "ParentBased"
+    assert configured["endpoint"] == "https://tempo.example/v1/traces"
+    assert configured["exporter"] is exporter
+    assert configured["processor"] is processor
+    assert configured["tracer_provider"] is not None
+    assert len(registered) == 1
+
+
+def test_configure_tracing_skips_setup_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(telemetry_module.config, "OTEL_ENABLED", False)
+
+    def unexpected_setup(*args: object, **kwargs: object) -> None:
+        raise AssertionError("tracing setup should be skipped")
+
+    monkeypatch.setattr(telemetry_module, "TracerProvider", unexpected_setup)
+
+    telemetry_module._configure_tracing()
 
 
 def test_http_and_llm_spans_are_correlated_without_prompt_content(
@@ -177,6 +265,79 @@ def test_http_client_span_records_endpoint_without_request_content(
         assert span.attributes["llm.outcome"] == "success"
     finally:
         provider.shutdown()
+
+
+def test_http_client_span_records_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(
+        telemetry_module,
+        "tracer",
+        provider.get_tracer("test"),
+    )
+    response = httpx.Response(
+        503,
+        request=httpx.Request("POST", "https://provider.test"),
+    )
+    error = httpx.HTTPStatusError(
+        "provider unavailable",
+        request=response.request,
+        response=response,
+    )
+
+    try:
+        with pytest.raises(httpx.HTTPStatusError, match="provider unavailable"):
+            with telemetry_module.http_client_span(
+                "openai",
+                "generate",
+                "test-model",
+                "https://provider.test/v1/responses",
+            ):
+                raise error
+
+        span = exporter.get_finished_spans()[0]
+        assert span.attributes["llm.outcome"] == "error"
+        assert span.attributes["http.response.status_code"] == 503
+    finally:
+        provider.shutdown()
+
+
+def test_http_middleware_continues_when_tracing_span_creation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class BrokenTracer:
+        def start_as_current_span(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("tracing backend unavailable")
+
+    class FakeGateway:
+        async def generate(
+            self,
+            prompt: str,
+            model: object,
+        ) -> GenerateResponse:
+            return GenerateResponse(
+                text="generated: " + prompt,
+                provider="ollama",
+                model="test",
+            )
+
+    monkeypatch.setattr(app_module, "tracer", BrokenTracer())
+    monkeypatch.setattr(app_module, "gateway", FakeGateway())
+    caplog.set_level("ERROR")
+
+    response = TestClient(app_module.app).post(
+        "/generate",
+        json={"prompt": "hello"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "generated: hello"
+    assert "HTTP tracing span creation failed" in caplog.text
+    assert "tracing backend unavailable" in caplog.text
 
 
 def test_resolver_span_records_fallback_decision(
