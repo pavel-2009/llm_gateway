@@ -71,15 +71,6 @@ class AppConfig(BaseSettings):
     # rate limiting
     MAX_CONCURRENT_REQUESTS: int = Field(default=50, gt=0)
 
-    # Circuit breaker
-    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = Field(default=5, gt=0)
-    CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float = Field(
-        default=30.0,
-        gt=0,
-        allow_inf_nan=False,
-    )
-    CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS: int = Field(default=1, gt=0)
-
     @field_validator("HOST", "OLLAMA_MODEL", "OPENAI_MODEL", "CLAUDE_MODEL")
     @classmethod
     def validate_non_empty_string(cls, value: str) -> str:
@@ -140,7 +131,6 @@ class AppConfig(BaseSettings):
         "RETRY_BASE_DELAY",
         "RETRY_MAX_DELAY",
         "RETRY_JITTER",
-        "CIRCUIT_BREAKER_RECOVERY_TIMEOUT",
     )
     @classmethod
     def validate_finite_number(cls, value: float) -> float:
