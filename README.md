@@ -124,7 +124,7 @@ uv run locust -f loadtest/locustfile.py --host http://127.0.0.1:8000
 ```bash
 uv run locust -f loadtest/locustfile.py \
   --host http://127.0.0.1:8000 \
-  --users 50 --spawn-rate 5 --run-time 2m --headless \
+  --users 100 --spawn-rate 5 --run-time 2m --headless \
   --csv loadtest/results/llm-gateway-load
 ```
 

@@ -1,4 +1,4 @@
 Method,Name,Error,Occurrences,First Seen,Last Seen
-POST,/generate,CatchResponseError('gateway returned HTTP 503'),6,2026-10-26T12:09:33Z,2026-10-26T12:10:42Z
-POST,/extract,CatchResponseError('gateway returned HTTP 503'),2,2026-10-26T12:09:29Z,2026-10-26T12:10:17Z
-POST,/stream,CatchResponseError('gateway stream did not complete successfully'),247,2026-10-26T12:09:10Z,2026-10-26T12:11:08Z
+POST,/generate,CatchResponseError('gateway returned HTTP 503'),3,2026-10-26T12:12:46Z,2026-10-26T12:13:29Z
+POST,/extract,CatchResponseError('gateway returned HTTP 503'),8,2026-10-26T12:12:43Z,2026-10-26T12:14:25Z
+POST,/stream,CatchResponseError('gateway stream did not complete successfully'),483,2026-10-26T12:12:31Z,2026-10-26T12:14:29Z
