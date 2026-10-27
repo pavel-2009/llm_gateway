@@ -55,15 +55,18 @@ uv sync
 uv run llm-gateway
 ```
 
-The service listens on `0.0.0.0:8000` by default. To run the local Docker
-stack, first set a unique `GRAFANA_ADMIN_PASSWORD` in `.env`:
+The service listens on `0.0.0.0:8000` by default. To run the Docker stack,
+first set a unique `GRAFANA_ADMIN_PASSWORD` in `.env`:
 
 ```bash
 cp .env.example .env
-docker compose up --build -d
+make up
 ```
 
-Compose downloads `qwen3:8b` for Ollama. The gateway, Ollama, Prometheus,
+By default, the gateway container connects to Ollama on the host at
+`host.docker.internal:11434`. Set `USE_OLLAMA_CONTAINER=true` in `.env` to
+start the Compose-managed Ollama container instead; it downloads `qwen3:8b`
+and publishes port `11435` on loopback. The gateway, Ollama, Prometheus,
 Jaeger, and Grafana are bound to loopback. Jaeger uses in-memory trace storage.
 
 ## API

@@ -7,7 +7,7 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: "8000"
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: qwen3:8b
       OTEL_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
@@ -16,10 +16,13 @@ services:
     depends_on:
       ollama-model:
         condition: service_completed_successfully
+        required: false
       jaeger:
         condition: service_started
 
   ollama:
+    profiles:
+      - ollama
     image: ollama/ollama
     volumes:
       - ollama_data:/root/.ollama
@@ -33,6 +36,8 @@ services:
       start_period: 20s
 
   ollama-model:
+    profiles:
+      - ollama
     image: ollama/ollama
     entrypoint: ["/bin/ollama"]
     command: ["pull", "qwen3:8b"]
