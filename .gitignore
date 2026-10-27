@@ -13,3 +13,5 @@ wheels/
 
 # Local environment variables and secrets
 .env
+.env.*
+!.env.example
