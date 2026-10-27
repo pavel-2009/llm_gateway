@@ -5,17 +5,46 @@ fallbacks, retries, streaming, metrics, and optional OpenTelemetry tracing.
 
 ## Architecture
 
-Requests pass through the FastAPI API and gateway to a model resolver. The
-resolver selects a provider by tier and tries configured fallbacks; provider
-adapters implement the OpenAI, Anthropic, and Ollama contracts. A policy
-pipeline applies timeouts and retries. Prometheus metrics are available at
-`/metrics`; tracing is optional.
+The request path separates API handling, model selection, retry policy, and
+provider integrations:
+
+```mermaid
+flowchart LR
+    Client --> API["FastAPI API<br/>app.py<br/>validation and SSE"]
+    API --> Gateway["LLMGateway<br/>llm_gateway.py"]
+    Gateway --> Resolver["ModelResolver<br/>tier selection and fallback"]
+    Resolver --> Registry["ModelRegistry<br/>provider candidates"]
+    Resolver --> Pipeline["Policy pipeline<br/>timeouts and retries"]
+    Pipeline --> Adapter["Provider adapter"]
+    Adapter --> Providers["OpenAI / Anthropic / Ollama"]
+    API -. request metrics .-> Prometheus["Prometheus<br/>/metrics"]
+    Gateway -. operation metrics .-> Prometheus
+    API -. optional traces .-> Tracing["OpenTelemetry / OTLP"]
+    Gateway -. optional traces .-> Tracing
+    Resolver -. optional traces .-> Tracing
+    Pipeline -. optional traces .-> Tracing
+```
 
 Model tiers:
 
 - `smart`: Anthropic → OpenAI → Ollama
 - `medium`: OpenAI → Ollama
 - `light`: Ollama only
+
+## Project layout
+
+```text
+src/llm_gateway/
+├── app.py                  # HTTP routes, middleware, error responses
+├── llm_gateway.py          # LLM operations and operation metrics
+├── models.py               # API request and response contracts
+├── prometheus.py           # Prometheus metric definitions
+├── telemetry.py            # OpenTelemetry setup
+├── core/                   # Settings and request logging context
+├── resolver/               # Model tiers, registry, fallback orchestration
+├── policy/                 # Provider execution, error mapping, retries
+└── adapter/                # Provider protocol and OpenAI/Anthropic/Ollama clients
+```
 
 ## Run
 
