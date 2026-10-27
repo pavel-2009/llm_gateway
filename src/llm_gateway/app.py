@@ -281,9 +281,9 @@ async def extract(request: Request) -> ExtractedReview:
     responses={
         200: {
             "description": (
-                "Server-Sent Events: `chunk` для каждого фрагмента; `done` "
-                "с итоговым количеством чанков и символов при успехе; `error` "
-                "при ошибке."
+                "Server-Sent Events: `chunk` for each output fragment; `done` "
+                "with the final chunk and character counts on success; `error` "
+                "on failure."
             ),
             "content": {
                 "text/event-stream": {

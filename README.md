@@ -1,197 +1,141 @@
 # LLM Gateway
 
-FastAPI-шлюз для моделей OpenAI, Anthropic и Ollama.
+A FastAPI service for OpenAI, Anthropic, and Ollama with model selection,
+fallbacks, retries, streaming, metrics, and optional OpenTelemetry tracing.
 
-## Локальный запуск
+## Architecture
 
-Установите проект и запустите console script:
+Requests pass through the FastAPI API and gateway to a model resolver. The
+resolver selects a provider by tier and tries configured fallbacks; provider
+adapters implement the OpenAI, Anthropic, and Ollama contracts. A policy
+pipeline applies timeouts and retries. Prometheus metrics are available at
+`/metrics`; tracing is optional.
+
+Model tiers:
+
+- `smart`: Anthropic → OpenAI → Ollama
+- `medium`: OpenAI → Ollama
+- `light`: Ollama only
+
+## Run
+
+Requires Python 3.14+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
 uv run llm-gateway
 ```
 
-По умолчанию сервер слушает `0.0.0.0:8000`. Адрес и порт задаются параметрами
-`HOST` и `PORT`.
-
-## Запуск в Docker
-
-Создайте `.env` из примера и задайте уникальный пароль Grafana в
-`GRAFANA_ADMIN_PASSWORD`:
+The service listens on `0.0.0.0:8000` by default. To run the local Docker
+stack, first set a unique `GRAFANA_ADMIN_PASSWORD` in `.env`:
 
 ```bash
 cp .env.example .env
-```
-
-После этого запустите Compose:
-
-```bash
 docker compose up --build -d
 ```
 
-Compose запускает Ollama, сохраняет её модели в volume `ollama_data` и
-загружает `qwen3:8b` перед запуском шлюза. В Compose адрес Ollama автоматически
-переопределяется на `http://ollama:11434`; `OLLAMA_BASE_URL` из `.env` остаётся
-полезен для локального запуска шлюза вне Docker. Для проверки доступности
-сервера выполните:
+Compose downloads `qwen3:8b` for Ollama. The gateway, Ollama, Prometheus,
+Jaeger, and Grafana are bound to loopback. Jaeger uses in-memory trace storage.
+
+## API
+
+All requests use JSON with a non-empty `prompt` (up to 10,000 characters).
+`model` is optional and defaults to `smart`.
+
+Generate text:
 
 ```bash
-curl -f http://localhost:8000/openapi.json
-```
-
-Метрики приложения доступны на `http://localhost:8000/metrics`, а веб-интерфейс
-Prometheus — на `http://localhost:9090`. Grafana с преднастроенным dashboard
-«LLM Gateway» доступна на `http://localhost:3000` (локальные учётные данные по
-умолчанию: имя пользователя `admin`, пароль задаётся через
-`GRAFANA_ADMIN_PASSWORD` в `.env`). В Grafana подключены Prometheus для графиков и
-Jaeger для поиска трейсов. Отдельный интерфейс Jaeger доступен на
-`http://localhost:16686`. Compose включает экспорт трасс OpenTelemetry через
-OTLP/HTTP; трейсы связывают полный HTTP-запрос, публичную LLM-операцию,
-выбор модели и fallback, policy/retry, вызов провайдера и задержку HTTP-запроса
-к Ollama, OpenAI или Anthropic. Для streaming в span операции указывается время
-до первого токена, а длительность span показывает время всего потока. OTLP
-порты Jaeger доступны на хосте только через loopback. Содержимое prompt и ключи
-провайдеров в атрибуты трейсов не записываются.
-Compose публикует gateway, Ollama и Prometheus только на loopback-интерфейсе
-хоста. Для локального запуска без Compose экспорт выключен по умолчанию; задайте
-`OTEL_ENABLED=true` и `OTEL_EXPORTER_OTLP_ENDPOINT`, чтобы включить его.
-Jaeger и Grafana также доступны только на loopback-интерфейсе. Не публикуйте
-сервисы за пределами локальной машины без отдельной настройки сетевой защиты и
-аутентификации.
-Jaeger использует in-memory storage для локальной отладки: его трейсы очищаются
-при перезапуске контейнера.
-
-При первом запуске Compose ждёт, пока
-сервис `ollama-model` скачает модель; до окончания загрузки gateway и его
-метрики не запускаются. Порт gateway внутри Compose фиксирован на `8000`, а
-переменная `PORT` задаёт порт публикации на хосте.
-
-Для проверки генерации через Ollama:
-
-```bash
-curl -f http://localhost:8000/generate \
+curl http://localhost:8000/generate \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Ответь одним словом: привет","model":"light"}'
+  -d '{"prompt":"Say hello in one word","model":"light"}'
 ```
 
-Посмотреть логи и остановить сервис:
+Example response:
 
-```bash
-docker compose logs -f gateway
-docker compose down
+```json
+{"text":"Hello","provider":"ollama","model":"qwen3:8b"}
 ```
 
-При `docker compose down -v` сохранённая модель также удаляется, и при следующем
-запуске будет загружена заново.
-
-## Нагрузочное тестирование шлюза без реальной модели
-
-Нагрузочный сценарий использует Locust и небольшой Ollama-совместимый mock:
-он случайно генерирует ответы, задержки и HTTP-ошибки, не загружая и не вызывая
-настоящую модель. Для этого сценария **не запускайте стандартный `docker compose
-up`**: Compose скачивает реальную модель Ollama.
-
-Установите зависимости проекта (включая Locust из группы `dev`):
+Extract a structured review:
 
 ```bash
-uv sync --dev
+curl http://localhost:8000/extract \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"The service was excellent. Rating: 5","model":"light"}'
 ```
 
-Запустите mock, указав вероятность ошибки и диапазон задержек. Он поддерживает
-форматы Ollama для генерации, структурированного извлечения и NDJSON-stream:
+Stream output as Server-Sent Events:
 
 ```bash
-MOCK_MODEL_ERROR_RATE=0.1 \
-MOCK_MODEL_MIN_DELAY_SECONDS=0.02 \
-MOCK_MODEL_MAX_DELAY_SECONDS=0.15 \
+curl -N http://localhost:8000/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Say hello","model":"light"}'
+```
+
+Streams emit `chunk` events followed by `done` on success. A failure is sent as
+an `error` event; streaming errors may therefore arrive after the HTTP response
+has started.
+
+## Configuration
+
+Settings come from environment variables or `.env`; see [.env.example](.env.example).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HOST`, `PORT` | `0.0.0.0`, `8000` | Bind address and port |
+| `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | `http://localhost:11434`, `qwen3:8b` | Ollama endpoint and model |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | unset | Optional cloud credentials |
+| `MAX_RETRIES` | `2` | Retry limit for transient failures |
+| `CONNECT_TIMEOUT`, `REQUEST_TIMEOUT`, `STREAM_TIMEOUT` | `5`, `60`, `120` seconds | Provider timeouts |
+| `MAX_CONCURRENT_REQUESTS` | `50` | Concurrent request limit |
+| `OTEL_ENABLED` | `false` | Enable OTLP/HTTP tracing |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318/v1/traces` | Trace receiver |
+
+`CLAUDE_API_KEY` is also accepted as an alias for `ANTHROPIC_API_KEY`.
+Provider model names and retry backoff can also be configured; see
+`src/llm_gateway/core/config.py`. Missing cloud credentials skip those
+providers and allow configured fallbacks.
+
+## Tests and load testing
+
+Run the test suite:
+
+```bash
+uv run pytest
+```
+
+To collect coverage:
+
+```bash
+uv run pytest --cov=src/llm_gateway --cov-report=term-missing tests/
+```
+
+Load tests use Locust and the Ollama-compatible mock, not a real model. Install
+the development dependencies with `uv sync --dev`, then start the mock and
+gateway in separate terminals:
+
+```bash
 uv run uvicorn loadtest.mock_ollama:app --host 127.0.0.1 --port 11435
 ```
-
-В другом терминале запустите шлюз без облачных ключей, настроив Ollama URL на
-mock. `model=light` в сценарии направляет запросы только к этому провайдеру:
 
 ```bash
 OLLAMA_BASE_URL=http://127.0.0.1:11435 \
 OLLAMA_MODEL=mock-model \
-OPENAI_API_KEY= \
-ANTHROPIC_API_KEY= \
+OPENAI_API_KEY= ANTHROPIC_API_KEY= \
 uv run llm-gateway
 ```
 
-В третьем терминале запустите Locust. Сценарий равномерно нагружает все три
-публичные операции шлюза — `/generate`, `/extract` и `/stream`; каждая проходит
-через HTTP API, middleware/метрики/трейсинг, gateway, resolver, policy/retry и
-настоящий Ollama provider adapter. Вместо модели отвечает mock-сервис:
+Run Locust in a third terminal:
 
 ```bash
 uv run locust -f loadtest/locustfile.py --host http://127.0.0.1:8000
 ```
 
-Откройте `http://localhost:8089`, задайте число пользователей и скорость их
-запуска. Для запуска без UI и сохранения CSV-отчёта:
+## Limitations
 
-```bash
-uv run locust -f loadtest/locustfile.py \
-  --host http://127.0.0.1:8000 \
-  --users 100 --spawn-rate 5 --run-time 2m --headless \
-  --csv loadtest/results/llm-gateway-load
-```
-
-Результаты каждого прогона сохраняются в `loadtest/results/` в CSV-файлы
-`llm-gateway-load_stats.csv`, `llm-gateway-load_stats_history.csv` и
-`llm-gateway-load_failures.csv`; Locust также может создать
-`llm-gateway-load_exceptions.csv`. Locust автоматически создаёт каталог.
-
-Locust измеряет пропускную способность отдельно по каждому endpoint, число
-запросов и ошибок, а также
-распределение времени ответа (включая p50/p95/p99 в отчёте). Метрики самого
-шлюза доступны во время и после прогона на `http://localhost:8000/metrics`:
-число запросов и их длительность по HTTP-маршрутам и статусам, длительность и
-исход LLM-операций, активные запросы к провайдеру и число повторных попыток.
-Ошибки mock намеренно считаются ошибками нагрузки, если после настроенных
-повторных попыток шлюз не смог вернуть успешный ответ.
-
-### Базовые результаты нагрузочного теста
-
-Сохранённый прогон из `loadtest/results/` выполнен с указанной выше
-конфигурацией: до 100 Locust-пользователей, скорость запуска 5 пользователей
-в секунду, около 119 секунд работы; mock отвечал с задержкой 20–150 мс и
-вероятностью ошибки 10%. Реальные модели и облачные провайдеры не
-использовались.
-
-| Endpoint | Запросы | Ошибки | Среднее время | p95 | p99 | Запросов/с |
-|---|---:|---:|---:|---:|---:|---:|
-| `/generate` | 4 849 | 3 (0,06%) | 177 мс | 830 мс | 980 мс | 40,7 |
-| `/extract` | 4 819 | 8 (0,17%) | 186 мс | 830 мс | 1 900 мс | 40,4 |
-| `/stream` | 4 830 | 483 (10,0%) | 100 мс | 160 мс | 180 мс | 40,5 |
-| **Всего** | **14 498** | **494 (3,4%)** | **154 мс** | **760 мс** | **950 мс** | **121,7** |
-
-Ошибки потоковой операции — ожидаемые ошибки mock, доставленные как SSE-события:
-Locust считает неуспешным stream без события `done`. Для `/generate` и
-`/extract` часть временных сбоев mock обрабатывается повторами шлюза, поэтому
-итоговая доля ошибок ниже заданных mock 10%. В этом прогоне максимальное время
-ответа составило 2,3 секунды.
-
-Это локальный baseline конкретного прогона, а не гарантия производительности
-или SLA: результаты зависят от компьютера, окружения и параметров mock.
-Повторный запуск сохраняет новые CSV с тем же префиксом и перезаписывает
-предыдущие результаты.
-
-По умолчанию шлюз повторяет часть временных ошибок. Чтобы измерить исходную
-долю ошибок mock без повторных попыток, задайте `MAX_RETRIES=0` при запуске
-шлюза; чтобы нагрузочно проверить политику повторов, оставьте настройку по
-умолчанию.
-
-## Настройки
-
-Параметры читаются из переменных окружения или из `.env` в рабочем каталоге.
-В Compose файл `.env` передаётся контейнеру; используйте `.env.example` как
-шаблон и не добавляйте `.env` с секретами в git. Файлы `.env.*` также
-игнорируются, кроме отслеживаемого шаблона `.env.example`.
-
-`OPENAI_API_KEY` и `ANTHROPIC_API_KEY` необязательны: если облачные ключи
-отсутствуют, шлюз пропускает соответствующих провайдеров и использует
-настроенные fallback-модели, включая Ollama. Для Anthropic также поддерживается
-прежнее имя `CLAUDE_API_KEY`. Таймауты и параметры retry настраиваются через
-одноимённые переменные из `core/config.py`.
-Некорректные критические настройки завершают запуск с ошибкой валидации.
+- The API has no built-in authentication. Do not expose it publicly without
+  network controls and an authentication layer.
+- Prompts are limited to 10,000 characters; concurrent requests are capped by
+  `MAX_CONCURRENT_REQUESTS`.
+- A stream cannot fall back to another provider after its first chunk is sent.
+- Local Compose traces are ephemeral and are lost when Jaeger restarts.

@@ -158,7 +158,7 @@ def test_stream_openapi_response_contract() -> None:
     response = main.app.openapi()["paths"]["/stream"]["post"]["responses"]["200"]
 
     assert "text/event-stream" in response["content"]
-    assert "количеством чанков и символов" in response["description"]
+    assert "final chunk and character counts" in response["description"]
 
 
 def test_empty_stream_reports_zero_counts(monkeypatch: pytest.MonkeyPatch) -> None:

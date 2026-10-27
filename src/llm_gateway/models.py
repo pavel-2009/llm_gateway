@@ -40,7 +40,7 @@ class ExtractedReview(BaseModel):
     sentiment: Literal["positive", "negative", "mixed", "neutral"]
     topics: list[str]
     rating: int = Field(
-        description="Оценка от 1 до 5, если известна; иначе 0.",
+        description="Rating from 1 to 5 when known; otherwise 0.",
         ge=0,
         le=5,
     )
@@ -50,18 +50,18 @@ class StreamChunk(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["chunk"] = "chunk"
-    index: int = Field(ge=1, description="Порядковый номер чанка, начиная с 1.")
-    content: str = Field(description="Текст текущего чанка.")
+    index: int = Field(ge=1, description="One-based chunk index.")
+    content: str = Field(description="The current output fragment.")
 
 
 class StreamComplete(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["done"] = "done"
-    chunks: int = Field(ge=0, description="Общее количество переданных чанков.")
+    chunks: int = Field(ge=0, description="Total number of output chunks.")
     output_chars: int = Field(
         ge=0,
-        description="Общее количество переданных символов.",
+        description="Total number of output characters.",
     )
 
 
