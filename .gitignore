@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .VSCodeCounter/
+.coverage
 
 # Local environment variables and secrets
 .env
